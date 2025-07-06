@@ -7,8 +7,8 @@ A high-performance, distributed caching system with Redis-compatible protocol, s
 - **Redis-Compatible Protocol**: Full support for Redis commands (SET, GET, DEL, PING, etc.)
 - **Sorted Sets**: Skip list-based implementation with ZADD, ZREM, ZSCORE, ZRANK operations
 - **Distributed Architecture**: Consistent hashing with virtual nodes for load balancing
-- **Multi-Proxy Support**: 5 proxy instances with HAProxy load balancing
-- **Centralized Health Monitoring**: Single health checker service monitoring all 50 nodes
+- **Multi-Proxy Support**: 3 proxy instances with HAProxy load balancing
+- **Centralized Health Monitoring**: Single health checker service monitoring all cache nodes
 - **Health-Aware Routing**: Proxies prevent requests to unhealthy nodes
 - **Docker Support**: Complete containerized deployment
 - **High Availability**: Automatic failover and health checks
@@ -41,6 +41,7 @@ A high-performance, distributed caching system with Redis-compatible protocol, s
 │  │  • Health checks on proxies                                                                │ │
 │  │  • Round-robin distribution                                                                │ │
 │  │  • Automatic failover                                                                       │ │
+│  │  • Stats dashboard (Port 8404)                                                             │ │
 │  └─────────────────────────────────────────────────────────────────────────────────────────────┘ │
 └─────────────────────┬───────────────────────────────────────────────────────────────────────────┘
                       │
@@ -49,17 +50,17 @@ A high-performance, distributed caching system with Redis-compatible protocol, s
 ┌─────────────────────────────────────────────────────────────────────────────────────────────────┐
 │                                  PROXY LAYER                                                    │
 │                                                                                                 │
-│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐          │
-│  │   Proxy 1   │  │   Proxy 2   │  │   Proxy 3   │  │   Proxy 4   │  │   Proxy 5   │          │
-│  │  (Port 6382)│  │  (Port 6383)│  │  (Port 6384)│  │  (Port 6385)│  │  (Port 6386)│          │
-│  │             │  │             │  │             │  │             │  │             │          │
-│  │ • Route     │  │ • Route     │  │ • Route     │  │ • Route     │  │ • Route     │          │
-│  │ • Query     │  │ • Query     │  │ • Query     │  │ • Query     │  │ • Query     │          │
-│  │   Health    │  │   Health    │  │   Health    │  │   Health    │  │   Health    │          │
-│  │   Service   │  │   Service   │  │   Service   │  │   Service   │  │   Service   │          │
-│  │ • Consistent│  │ • Consistent│  │ • Consistent│  │ • Consistent│  │ • Consistent│          │
-│  │   Hashing   │  │   Hashing   │  │   Hashing   │  │   Hashing   │  │   Hashing   │          │
-│  └─────────────┘  └─────────────┘  └─────────────┘  └─────────────┘  └─────────────┘          │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐                                            │
+│  │   Proxy 1   │  │   Proxy 2   │  │   Proxy 3   │                                            │
+│  │  (Port 6382)│  │  (Port 6383)│  │  (Port 6384)│                                            │
+│  │             │  │             │  │             │                                            │
+│  │ • Route     │  │ • Route     │  │ • Route     │                                            │
+│  │ • Query     │  │ • Query     │  │ • Query     │                                            │
+│  │   Health    │  │   Health    │  │   Health    │                                            │
+│  │   Service   │  │   Service   │  │   Service   │                                            │
+│  │ • Consistent│  │ • Consistent│  │ • Consistent│                                            │
+│  │   Hashing   │  │   Hashing   │  │   Hashing   │                                            │
+│  └─────────────┘  └─────────────┘  └─────────────┘                                            │
 └─────────────────────┬───────────────────────────────────────────────────────────────────────────┘
                       │
                       │ Health Status Queries
@@ -71,11 +72,12 @@ A high-performance, distributed caching system with Redis-compatible protocol, s
 │  │                        Centralized Health Checker Service                                   │ │
 │  │                                (Port 8080)                                                  │ │
 │  │                                                                                             │ │
-│  │  • Monitors all 50 cache nodes                                                             │ │
+│  │  • Monitors all 3 cache nodes                                                              │ │
 │  │  • Maintains HealthRegistry                                                                │ │
 │  │  • Provides REST API                                                                        │ │
 │  │  • Single health check per node                                                             │ │
 │  │  • 30-second check intervals                                                                │ │
+│  │  • Health-aware routing support                                                             │ │
 │  └─────────────────────────────────────────────────────────────────────────────────────────────┘ │
 └─────────────────────┬───────────────────────────────────────────────────────────────────────────┘
                       │
@@ -84,67 +86,66 @@ A high-performance, distributed caching system with Redis-compatible protocol, s
 ┌─────────────────────────────────────────────────────────────────────────────────────────────────┐
 │                                  CACHE LAYER                                                    │
 │                                                                                                 │
-│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐          │
-│  │   Node 1    │  │   Node 2    │  │   Node 3    │  │   Node 4    │  │   Node 5    │          │
-│  │  (Port 7001)│  │  (Port 7002)│  │  (Port 7003)│  │  (Port 7004)│  │  (Port 7005)│          │
-│  │             │  │             │  │             │  │             │  │             │          │
-│  │ • Cache     │  │ • Cache     │  │ • Cache     │  │ • Cache     │  │ • Cache     │          │
-│  │ • Store     │  │ • Store     │  │ • Store     │  │ • Store     │  │ • Store     │          │
-│  │ • Retrieve  │  │ • Retrieve  │  │ • Retrieve  │  │ • Retrieve  │  │ • Retrieve  │          │
-│  │ • Sorted    │  │ • Sorted    │  │ • Sorted    │  │ • Sorted    │  │ • Sorted    │          │
-│  │   Sets      │  │   Sets      │  │   Sets      │  │   Sets      │  │   Sets      │          │
-│  └─────────────┘  └─────────────┘  └─────────────┘  └─────────────┘  └─────────────┘          │
-│                                                                                                 │
-│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐          │
-│  │   Node 6    │  │   Node 7    │  │   Node 8    │  │   Node 9    │  │  Node 10    │          │
-│  │  (Port 7006)│  │  (Port 7007)│  │  (Port 7008)│  │  (Port 7009)│  │  (Port 7010)│          │
-│  └─────────────┘  └─────────────┘  └─────────────┘  └─────────────┘  └─────────────┘          │
-│                                                                                                 │
-│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐          │
-│  │  Node 46    │  │  Node 47    │  │  Node 48    │  │  Node 49    │  │  Node 50    │          │
-│  │  (Port 7046)│  │  (Port 7047)│  │  (Port 7048)│  │  (Port 7049)│  │  (Port 7050)│          │
-│  └─────────────┘  └─────────────┘  └─────────────┘  └─────────────┘  └─────────────┘          │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐                                            │
+│  │   Node 1    │  │   Node 2    │  │   Node 3    │                                            │
+│  │  (Port 7001)│  │  (Port 7002)│  │  (Port 7003)│                                            │
+│  │             │  │             │  │             │                                            │
+│  │ • Cache     │  │ • Cache     │  │ • Cache     │                                            │
+│  │ • Store     │  │ • Store     │  │ • Store     │                                            │
+│  │ • Retrieve  │  │ • Retrieve  │  │ • Retrieve  │                                            │
+│  │ • Sorted    │  │ • Sorted    │  │ • Sorted    │                                            │
+│  │   Sets      │  │   Sets      │  │   Sets      │                                            │
+│  │ • Persistence│  │ • Persistence│  │ • Persistence│                                          │
+│  │ • WAL       │  │ • WAL       │  │ • WAL       │                                            │
+│  └─────────────┘  └─────────────┘  └─────────────┘                                            │
 └─────────────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
 ### Key Benefits of Centralized Health Checking
 
-- **80% Reduction in Health Check Traffic**: Single health checker instead of 5 proxies checking all nodes
+- **Reduced Health Check Traffic**: Single health checker instead of multiple proxies checking all nodes
 - **Better Resource Utilization**: Nodes receive health checks from only one source
 - **Consistent Health Information**: All proxies see the same health status
 - **Scalable Architecture**: Adding more proxies doesn't increase health check load
 - **Health-Aware Routing**: Proxies prevent requests to unhealthy nodes
+- **Simplified Monitoring**: Centralized health status through REST API
 
 ## Quick Start
 
 ### Prerequisites
 
 - Docker and Docker Compose
-- At least 8GB RAM for the full cluster
+- At least 4GB RAM for the 3-node cluster
 - Java 11+ (for development)
 
-### Starting the Large Cluster (50 Nodes + 5 Proxies)
+### Starting the 3-Node Cluster (Recommended)
+
+This setup is ideal for development, testing, and small to medium workloads. It launches 3 data nodes, 3 proxy nodes, a load balancer (HAProxy), and a centralized health checker.
 
 ```bash
-# Start the complete cluster with centralized health monitoring
-./scripts/start-large-cluster.sh
+# Start the 3-node cluster with centralized health monitoring
+./scripts/start-cluster.sh
 
 # Monitor cluster health
-./scripts/health-monitor.sh all
+./scripts/monitor-cluster.sh
 
 # Test cluster connectivity
 ./scripts/test-cluster.sh
 ```
 
-### Access Points
+### Access Points (3-Node Setup)
 
-| Component | Port | Purpose |
-|-----------|------|---------|
-| Load Balancer | 6380 | Main entry point for clients |
-| HAProxy Stats | 8404 | Monitoring dashboard |
-| Health Service | 8080 | Health checker API |
-| Proxy 1-5 | 6382-6386 | Direct proxy access |
-| Node 1-50 | 7001-7050 | Direct node access |
+| Component         | Port   | Purpose                       |
+|-------------------|--------|-------------------------------|
+| Load Balancer     | 6380   | Main entry point for clients  |
+| HAProxy Stats     | 8404   | Monitoring dashboard          |
+| Health Service    | 8080   | Health checker API            |
+| Proxy 1           | 6382   | Direct proxy access           |
+| Proxy 2           | 6383   | Direct proxy access           |
+| Proxy 3           | 6384   | Direct proxy access           |
+| Node 1            | 7001   | Direct node access            |
+| Node 2            | 7002   | Direct node access            |
+| Node 3            | 7003   | Direct node access            |
 
 ### Using the Cluster
 
@@ -168,88 +169,32 @@ ZRANGE myset 0 -1
 PING
 ```
 
-## 3-Node, 3-Proxy Cluster (Local Testing)
+## Large Cluster (50 Nodes + 5 Proxies)
 
-This setup is ideal for local development and testing. It launches 3 data nodes, 3 proxy nodes, a load balancer (HAProxy), and a centralized health checker.
+For production workloads requiring high capacity and redundancy, you can deploy the full 50-node cluster.
 
-### Prerequisites
-- Docker and Docker Compose
-- Java 11+ (for development)
-
-### Build and Run
+### Starting the Large Cluster
 
 ```bash
-# Build and start the 3-node, 3-proxy cluster
-./scripts/build-and-run-3nodes.sh
+# Start the complete cluster with centralized health monitoring
+./scripts/start-large-cluster.sh
+
+# Monitor cluster health
+./scripts/health-monitor.sh all
+
+# Test cluster connectivity
+./scripts/test-cluster.sh
 ```
 
-### Monitor the Cluster
+### Access Points (Large Cluster)
 
-```bash
-# Monitor cluster health, nodes, proxies, and load balancer
-./scripts/monitor-3nodes.sh
-```
-
-### Test the Cluster
-
-```bash
-# Run automated tests for connectivity, operations, persistence, and health
-./scripts/test-3nodes.sh
-```
-
-### Stop the Cluster
-
-```bash
-# Stop and clean up all containers and volumes
-./scripts/stop-3nodes.sh
-```
-
-### Access Points (3-Node Setup)
-
-| Component         | Port   | Purpose                       |
-|-------------------|--------|-------------------------------|
-| Load Balancer     | 6380   | Main entry point for clients  |
-| HAProxy Stats     | 8404   | Monitoring dashboard          |
-| Health Service    | 8080   | Health checker API            |
-| Proxy 1           | 6382   | Direct proxy access           |
-| Proxy 2           | 6383   | Direct proxy access           |
-| Proxy 3           | 6384   | Direct proxy access           |
-| Node 1            | 7001   | Direct node access            |
-| Node 2            | 7002   | Direct node access            |
-| Node 3            | 7003   | Direct node access            |
-| Node 4            | 7004   | Direct node access            |
-| Node 5            | 7005   | Direct node access            |
-| Node 6            | 7006   | Direct node access            |
-| Node 7            | 7007   | Direct node access            |
-| Node 8            | 7008   | Direct node access            |
-| Node 9            | 7009   | Direct node access            |
-| Node 10           | 7010   | Direct node access            |
-
-### Configuration Files
-- `docker-compose-3nodes.yml`: Compose file for 3 nodes, 3 proxies, health checker, and load balancer
-- `config/haproxy.cfg`: HAProxy config for 3 proxies
-
-### Example Usage
-
-```bash
-# Connect through load balancer
-redis-cli -h localhost -p 6380
-
-# Basic operations
-SET mykey myvalue
-GET mykey
-DEL mykey
-
-# Sorted set operations
-ZADD myset 1.0 member1
-ZADD myset 2.0 member2
-ZSCORE myset member1
-ZRANK myset member2
-ZRANGE myset 0 -1
-
-# Health check
-PING
-```
+| Component | Port | Purpose |
+|-----------|------|---------|
+| Load Balancer | 6380 | Main entry point for clients |
+| HAProxy Stats | 8404 | Monitoring dashboard |
+| Health Service | 8080 | Health checker API |
+| Proxy 1-5 | 6382-6386 | Direct proxy access |
+| Node 1-50 | 7001-7050 | Direct node access |
 
 ## Health Monitoring
 
@@ -294,9 +239,9 @@ curl http://localhost:8080/health/nodes/node1
 ## Architecture Components
 
 ### 1. Centralized Health Checker Service
-- **Purpose**: Monitor all 50 cache nodes
+- **Purpose**: Monitor all cache nodes (3 nodes in default setup)
 - **Port**: 8080 (REST API)
-- **Health Checks**: 50 nodes, every 30 seconds
+- **Health Checks**: 3 nodes, every 30 seconds (configurable)
 - **Features**: Single health check per node, REST API, health registry
 
 ### 2. Health Service Client
@@ -310,13 +255,13 @@ curl http://localhost:8080/health/nodes/node1
 
 ### 4. FastCache Proxies
 - **Purpose**: Route requests to appropriate cache nodes
-- **Ports**: 6382-6386
+- **Ports**: 6382-6384 (3 proxies in default setup)
 - **Features**: Consistent hashing, health-aware routing, protocol handling
 
 ### 5. Cache Nodes
 - **Purpose**: Store and retrieve data
-- **Ports**: 7001-7050
-- **Features**: Key-value storage, sorted sets, TTL, eviction policies
+- **Ports**: 7001-7003 (3 nodes in default setup)
+- **Features**: Key-value storage, sorted sets, TTL, eviction policies, persistence
 
 ## Development
 
@@ -385,15 +330,22 @@ The load balancer is configured with:
 
 **Before (Distributed Health Checking)**:
 ```
-Health Check Traffic = 50 nodes × 5 proxies × 1 check/30s = 250 checks/30s
+Health Check Traffic = 3 nodes × 3 proxies × 1 check/30s = 9 checks/30s
 ```
 
 **After (Centralized Health Checking)**:
 ```
-Health Check Traffic = 50 nodes × 1 health service × 1 check/30s = 50 checks/30s
+Health Check Traffic = 3 nodes × 1 health service × 1 check/30s = 3 checks/30s
 ```
 
-**Improvement**: 80% reduction in health check traffic
+**Improvement**: 67% reduction in health check traffic
+
+**For Large Clusters (50 nodes, 5 proxies)**:
+```
+Before: 50 nodes × 5 proxies × 1 check/30s = 250 checks/30s
+After:  50 nodes × 1 health service × 1 check/30s = 50 checks/30s
+Improvement: 80% reduction in health check traffic
+```
 
 ### Common Issues
 
@@ -428,10 +380,10 @@ Health Check Traffic = 50 nodes × 1 health service × 1 check/30s = 50 checks/3
 
 ### Resource Requirements
 
-- **Memory**: 8GB+ for full cluster
-- **CPU**: 4+ cores recommended
+- **Memory**: 4GB+ for 3-node cluster, 8GB+ for full cluster
+- **CPU**: 2+ cores for 3-node cluster, 4+ cores for full cluster
 - **Network**: 1Gbps+ for high throughput
-- **Storage**: 10GB+ for logs and data
+- **Storage**: 5GB+ for 3-node cluster, 10GB+ for full cluster
 
 ### Scaling Considerations
 
