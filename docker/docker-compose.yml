@@ -1,0 +1,134 @@
+version: '3.8'
+
+services:
+  # FastCache Node 1
+  fastcache-node1:
+    build: .
+    container_name: fastcache-node1
+    hostname: fastcache-node1
+    ports:
+      - "6379:6379"
+    environment:
+      - NODE_ID=node1
+      - NODE_HOST=fastcache-node1
+      - NODE_PORT=6379
+      - CLUSTER_MODE=true
+      - CLUSTER_NODES=fastcache-node1:6379,fastcache-node2:6379,fastcache-node3:6379
+    volumes:
+      - fastcache_data1:/app/data
+      - fastcache_logs1:/app/logs
+    networks:
+      - fastcache_network
+    command: ["java", "-jar", "build/libs/FastCache-1.0.0-fat.jar", "--host", "0.0.0.0", "--port", "6379", "--node-id", "node1", "--cluster-mode", "--cluster-nodes", "fastcache-node1:6379,fastcache-node2:6379,fastcache-node3:6379"]
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "6379"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # FastCache Node 2
+  fastcache-node2:
+    build: .
+    container_name: fastcache-node2
+    hostname: fastcache-node2
+    ports:
+      - "6380:6379"
+    environment:
+      - NODE_ID=node2
+      - NODE_HOST=fastcache-node2
+      - NODE_PORT=6379
+      - CLUSTER_MODE=true
+      - CLUSTER_NODES=fastcache-node1:6379,fastcache-node2:6379,fastcache-node3:6379
+    volumes:
+      - fastcache_data2:/app/data
+      - fastcache_logs2:/app/logs
+    networks:
+      - fastcache_network
+    command: ["java", "-jar", "build/libs/FastCache-1.0.0-fat.jar", "--host", "0.0.0.0", "--port", "6379", "--node-id", "node2", "--cluster-mode", "--cluster-nodes", "fastcache-node1:6379,fastcache-node2:6379,fastcache-node3:6379"]
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "6379"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    depends_on:
+      - fastcache-node1
+
+  # FastCache Node 3
+  fastcache-node3:
+    build: .
+    container_name: fastcache-node3
+    hostname: fastcache-node3
+    ports:
+      - "6381:6379"
+    environment:
+      - NODE_ID=node3
+      - NODE_HOST=fastcache-node3
+      - NODE_PORT=6379
+      - CLUSTER_MODE=true
+      - CLUSTER_NODES=fastcache-node1:6379,fastcache-node2:6379,fastcache-node3:6379
+    volumes:
+      - fastcache_data3:/app/data
+      - fastcache_logs3:/app/logs
+    networks:
+      - fastcache_network
+    command: ["java", "-jar", "build/libs/FastCache-1.0.0-fat.jar", "--host", "0.0.0.0", "--port", "6379", "--node-id", "node3", "--cluster-mode", "--cluster-nodes", "fastcache-node1:6379,fastcache-node2:6379,fastcache-node3:6379"]
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "6379"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    depends_on:
+      - fastcache-node1
+      - fastcache-node2
+
+  # FastCache Proxy (Optional - for load balancing)
+  fastcache-proxy:
+    build: .
+    container_name: fastcache-proxy
+    hostname: fastcache-proxy
+    ports:
+      - "6382:6379"
+    environment:
+      - PROXY_MODE=true
+      - CLUSTER_NODES=fastcache-node1:6379,fastcache-node2:6379,fastcache-node3:6379
+    volumes:
+      - fastcache_proxy_logs:/app/logs
+    networks:
+      - fastcache_network
+    command: ["java", "-cp", "build/libs/FastCache-1.0.0-fat.jar", "com.fastcache.proxy.FastCacheProxy", "--host", "0.0.0.0", "--port", "6379", "--cluster-nodes", "fastcache-node1:6379,fastcache-node2:6379,fastcache-node3:6379"]
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "6379"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    depends_on:
+      - fastcache-node1
+      - fastcache-node2
+      - fastcache-node3
+
+volumes:
+  fastcache_data1:
+    driver: local
+  fastcache_data2:
+    driver: local
+  fastcache_data3:
+    driver: local
+  fastcache_logs1:
+    driver: local
+  fastcache_logs2:
+    driver: local
+  fastcache_logs3:
+    driver: local
+  fastcache_proxy_logs:
+    driver: local
+
+networks:
+  fastcache_network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16 

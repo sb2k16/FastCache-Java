@@ -1,0 +1,79 @@
+plugins {
+    id 'java'
+    id 'org.springframework.boot' version '3.2.0'
+    id 'io.spring.dependency-management' version '1.1.4'
+}
+
+group = 'com.fastcache'
+version = '1.0.0'
+description = 'Health checker service for FastCache cluster'
+
+java {
+    sourceCompatibility = JavaVersion.VERSION_17
+    targetCompatibility = JavaVersion.VERSION_17
+}
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    // Spring Boot Web Starter
+    implementation 'org.springframework.boot:spring-boot-starter-web'
+    
+    // Spring Boot Actuator for health endpoints
+    implementation 'org.springframework.boot:spring-boot-starter-actuator'
+    
+    // JSON processing
+    implementation 'com.fasterxml.jackson.core:jackson-databind:2.15.2'
+    
+    // Logging
+    implementation 'org.slf4j:slf4j-api:2.0.9'
+    implementation 'ch.qos.logback:logback-classic:1.4.11'
+    
+    // Utilities
+    implementation 'org.apache.commons:commons-lang3:3.12.0'
+    
+    // Testing
+    testImplementation 'org.springframework.boot:spring-boot-starter-test'
+    testImplementation 'org.junit.jupiter:junit-jupiter:5.10.0'
+}
+
+test {
+    useJUnitPlatform()
+    testLogging {
+        events "passed", "skipped", "failed"
+    }
+}
+
+// Create a fat JAR with all dependencies
+jar {
+    enabled = false
+}
+
+bootJar {
+    archiveClassifier = 'fat'
+    manifest {
+        attributes(
+            'Start-Class': 'com.fastcache.health.CentralizedHealthCheckerService',
+            'Implementation-Title': 'FastCache Health Checker',
+            'Implementation-Version': project.version,
+            'Implementation-Vendor': 'FastCache Team'
+        )
+    }
+}
+
+// Task to run the health checker
+task runHealthChecker(type: JavaExec) {
+    group = 'application'
+    description = 'Run the FastCache health checker service'
+    mainClass = 'com.fastcache.health.CentralizedHealthCheckerService'
+    classpath = sourceSets.main.runtimeClasspath
+    standardInput = System.in
+}
+
+// Configure all Java compilation tasks
+tasks.withType(JavaCompile) {
+    options.encoding = 'UTF-8'
+    options.compilerArgs += ['-Xlint:unchecked', '-Xlint:deprecation']
+} 

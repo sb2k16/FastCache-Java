@@ -1,0 +1,480 @@
+version: '3.8'
+
+services:
+  # Load Balancer (HAProxy)
+  load-balancer:
+    image: haproxy:2.8
+    container_name: fastcache-load-balancer
+    hostname: fastcache-load-balancer
+    ports:
+      - "6380:6380"
+      - "8404:8404"
+    volumes:
+      - ./config/haproxy-10nodes.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+    networks:
+      - fastcache_network
+    depends_on:
+      - fastcache-proxy1
+      - fastcache-proxy2
+      - fastcache-proxy3
+    healthcheck:
+      test: ["CMD", "haproxy", "-c", "-f", "/usr/local/etc/haproxy/haproxy.cfg"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Centralized Health Checker Service
+  health-checker:
+    build: .
+    container_name: fastcache-health-checker
+    hostname: fastcache-health-checker
+    ports:
+      - "8080:8080"
+    environment:
+      - HEALTH_CHECK_INTERVAL=30s
+      - HEALTH_CHECK_TIMEOUT=5s
+      - NODE_COUNT=10
+    volumes:
+      - fastcache_health_logs:/app/logs
+    networks:
+      - fastcache_network
+    command: ["java", "-jar", "health-checker/build/libs/health-checker-1.0.0-fat.jar"]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health/ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # FastCache Proxy 1
+  fastcache-proxy1:
+    build: .
+    container_name: fastcache-proxy1
+    hostname: fastcache-proxy1
+    ports:
+      - "6382:6379"
+    environment:
+      - PROXY_ID=proxy1
+      - PROXY_MODE=true
+      - HEALTH_SERVICE_URL=http://health-checker:8080
+      - CLUSTER_NODES=fastcache-node1:6379,fastcache-node2:6379,fastcache-node3:6379,fastcache-node4:6379,fastcache-node5:6379,fastcache-node6:6379,fastcache-node7:6379,fastcache-node8:6379,fastcache-node9:6379,fastcache-node10:6379
+    volumes:
+      - fastcache_proxy1_logs:/app/logs
+    networks:
+      - fastcache_network
+    command: ["java", "-cp", "build/libs/FastCache-1.0.0-fat.jar", "com.fastcache.proxy.FastCacheProxy", "--host", "0.0.0.0", "--port", "6379", "--proxy-id", "proxy1", "--health-service", "http://health-checker:8080", "--cluster-nodes", "fastcache-node1:6379,fastcache-node2:6379,fastcache-node3:6379,fastcache-node4:6379,fastcache-node5:6379,fastcache-node6:6379,fastcache-node7:6379,fastcache-node8:6379,fastcache-node9:6379,fastcache-node10:6379"]
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "6379"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    depends_on:
+      - health-checker
+
+  # FastCache Proxy 2
+  fastcache-proxy2:
+    build: .
+    container_name: fastcache-proxy2
+    hostname: fastcache-proxy2
+    ports:
+      - "6383:6379"
+    environment:
+      - PROXY_ID=proxy2
+      - PROXY_MODE=true
+      - HEALTH_SERVICE_URL=http://health-checker:8080
+      - CLUSTER_NODES=fastcache-node1:6379,fastcache-node2:6379,fastcache-node3:6379,fastcache-node4:6379,fastcache-node5:6379,fastcache-node6:6379,fastcache-node7:6379,fastcache-node8:6379,fastcache-node9:6379,fastcache-node10:6379
+    volumes:
+      - fastcache_proxy2_logs:/app/logs
+    networks:
+      - fastcache_network
+    command: ["java", "-cp", "build/libs/FastCache-1.0.0-fat.jar", "com.fastcache.proxy.FastCacheProxy", "--host", "0.0.0.0", "--port", "6379", "--proxy-id", "proxy2", "--health-service", "http://health-checker:8080", "--cluster-nodes", "fastcache-node1:6379,fastcache-node2:6379,fastcache-node3:6379,fastcache-node4:6379,fastcache-node5:6379,fastcache-node6:6379,fastcache-node7:6379,fastcache-node8:6379,fastcache-node9:6379,fastcache-node10:6379"]
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "6379"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    depends_on:
+      - health-checker
+
+  # FastCache Proxy 3
+  fastcache-proxy3:
+    build: .
+    container_name: fastcache-proxy3
+    hostname: fastcache-proxy3
+    ports:
+      - "6384:6379"
+    environment:
+      - PROXY_ID=proxy3
+      - PROXY_MODE=true
+      - HEALTH_SERVICE_URL=http://health-checker:8080
+      - CLUSTER_NODES=fastcache-node1:6379,fastcache-node2:6379,fastcache-node3:6379,fastcache-node4:6379,fastcache-node5:6379,fastcache-node6:6379,fastcache-node7:6379,fastcache-node8:6379,fastcache-node9:6379,fastcache-node10:6379
+    volumes:
+      - fastcache_proxy3_logs:/app/logs
+    networks:
+      - fastcache_network
+    command: ["java", "-cp", "build/libs/FastCache-1.0.0-fat.jar", "com.fastcache.proxy.FastCacheProxy", "--host", "0.0.0.0", "--port", "6379", "--proxy-id", "proxy3", "--health-service", "http://health-checker:8080", "--cluster-nodes", "fastcache-node1:6379,fastcache-node2:6379,fastcache-node3:6379,fastcache-node4:6379,fastcache-node5:6379,fastcache-node6:6379,fastcache-node7:6379,fastcache-node8:6379,fastcache-node9:6379,fastcache-node10:6379"]
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "6379"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    depends_on:
+      - health-checker
+
+  # FastCache Data Nodes (1-10)
+  
+  fastcache-node1:
+    build: .
+    container_name: fastcache-node1
+    hostname: fastcache-node1
+    ports:
+      - "7001:6379"
+    environment:
+      - NODE_ID=node1
+      - NODE_HOST=fastcache-node1
+      - NODE_PORT=6379
+      - CLUSTER_MODE=true
+      - PERSISTENCE_ENABLED=true
+      - CLUSTER_NODES=fastcache-node1:6379,fastcache-node2:6379,fastcache-node3:6379,fastcache-node4:6379,fastcache-node5:6379,fastcache-node6:6379,fastcache-node7:6379,fastcache-node8:6379,fastcache-node9:6379,fastcache-node10:6379
+    volumes:
+      - fastcache_data1:/app/data
+      - fastcache_logs1:/app/logs
+    networks:
+      - fastcache_network
+    command: ["java", "-jar", "build/libs/FastCache-1.0.0-fat.jar", "--host", "0.0.0.0", "--port", "6379", "--node-id", "node1", "--cluster-mode", "--persistence-enabled", "--cluster-nodes", "fastcache-node1:6379,fastcache-node2:6379,fastcache-node3:6379,fastcache-node4:6379,fastcache-node5:6379,fastcache-node6:6379,fastcache-node7:6379,fastcache-node8:6379,fastcache-node9:6379,fastcache-node10:6379"]
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "6379"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  fastcache-node2:
+    build: .
+    container_name: fastcache-node2
+    hostname: fastcache-node2
+    ports:
+      - "7002:6379"
+    environment:
+      - NODE_ID=node2
+      - NODE_HOST=fastcache-node2
+      - NODE_PORT=6379
+      - CLUSTER_MODE=true
+      - PERSISTENCE_ENABLED=true
+      - CLUSTER_NODES=fastcache-node1:6379,fastcache-node2:6379,fastcache-node3:6379,fastcache-node4:6379,fastcache-node5:6379,fastcache-node6:6379,fastcache-node7:6379,fastcache-node8:6379,fastcache-node9:6379,fastcache-node10:6379
+    volumes:
+      - fastcache_data2:/app/data
+      - fastcache_logs2:/app/logs
+    networks:
+      - fastcache_network
+    command: ["java", "-jar", "build/libs/FastCache-1.0.0-fat.jar", "--host", "0.0.0.0", "--port", "6379", "--node-id", "node2", "--cluster-mode", "--persistence-enabled", "--cluster-nodes", "fastcache-node1:6379,fastcache-node2:6379,fastcache-node3:6379,fastcache-node4:6379,fastcache-node5:6379,fastcache-node6:6379,fastcache-node7:6379,fastcache-node8:6379,fastcache-node9:6379,fastcache-node10:6379"]
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "6379"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    depends_on:
+      - fastcache-node1
+
+  fastcache-node3:
+    build: .
+    container_name: fastcache-node3
+    hostname: fastcache-node3
+    ports:
+      - "7003:6379"
+    environment:
+      - NODE_ID=node3
+      - NODE_HOST=fastcache-node3
+      - NODE_PORT=6379
+      - CLUSTER_MODE=true
+      - PERSISTENCE_ENABLED=true
+      - CLUSTER_NODES=fastcache-node1:6379,fastcache-node2:6379,fastcache-node3:6379,fastcache-node4:6379,fastcache-node5:6379,fastcache-node6:6379,fastcache-node7:6379,fastcache-node8:6379,fastcache-node9:6379,fastcache-node10:6379
+    volumes:
+      - fastcache_data3:/app/data
+      - fastcache_logs3:/app/logs
+    networks:
+      - fastcache_network
+    command: ["java", "-jar", "build/libs/FastCache-1.0.0-fat.jar", "--host", "0.0.0.0", "--port", "6379", "--node-id", "node3", "--cluster-mode", "--persistence-enabled", "--cluster-nodes", "fastcache-node1:6379,fastcache-node2:6379,fastcache-node3:6379,fastcache-node4:6379,fastcache-node5:6379,fastcache-node6:6379,fastcache-node7:6379,fastcache-node8:6379,fastcache-node9:6379,fastcache-node10:6379"]
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "6379"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    depends_on:
+      - fastcache-node1
+      - fastcache-node2
+
+  fastcache-node4:
+    build: .
+    container_name: fastcache-node4
+    hostname: fastcache-node4
+    ports:
+      - "7004:6379"
+    environment:
+      - NODE_ID=node4
+      - NODE_HOST=fastcache-node4
+      - NODE_PORT=6379
+      - CLUSTER_MODE=true
+      - PERSISTENCE_ENABLED=true
+      - CLUSTER_NODES=fastcache-node1:6379,fastcache-node2:6379,fastcache-node3:6379,fastcache-node4:6379,fastcache-node5:6379,fastcache-node6:6379,fastcache-node7:6379,fastcache-node8:6379,fastcache-node9:6379,fastcache-node10:6379
+    volumes:
+      - fastcache_data4:/app/data
+      - fastcache_logs4:/app/logs
+    networks:
+      - fastcache_network
+    command: ["java", "-jar", "build/libs/FastCache-1.0.0-fat.jar", "--host", "0.0.0.0", "--port", "6379", "--node-id", "node4", "--cluster-mode", "--persistence-enabled", "--cluster-nodes", "fastcache-node1:6379,fastcache-node2:6379,fastcache-node3:6379,fastcache-node4:6379,fastcache-node5:6379,fastcache-node6:6379,fastcache-node7:6379,fastcache-node8:6379,fastcache-node9:6379,fastcache-node10:6379"]
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "6379"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    depends_on:
+      - fastcache-node1
+      - fastcache-node2
+      - fastcache-node3
+
+  fastcache-node5:
+    build: .
+    container_name: fastcache-node5
+    hostname: fastcache-node5
+    ports:
+      - "7005:6379"
+    environment:
+      - NODE_ID=node5
+      - NODE_HOST=fastcache-node5
+      - NODE_PORT=6379
+      - CLUSTER_MODE=true
+      - PERSISTENCE_ENABLED=true
+      - CLUSTER_NODES=fastcache-node1:6379,fastcache-node2:6379,fastcache-node3:6379,fastcache-node4:6379,fastcache-node5:6379,fastcache-node6:6379,fastcache-node7:6379,fastcache-node8:6379,fastcache-node9:6379,fastcache-node10:6379
+    volumes:
+      - fastcache_data5:/app/data
+      - fastcache_logs5:/app/logs
+    networks:
+      - fastcache_network
+    command: ["java", "-jar", "build/libs/FastCache-1.0.0-fat.jar", "--host", "0.0.0.0", "--port", "6379", "--node-id", "node5", "--cluster-mode", "--persistence-enabled", "--cluster-nodes", "fastcache-node1:6379,fastcache-node2:6379,fastcache-node3:6379,fastcache-node4:6379,fastcache-node5:6379,fastcache-node6:6379,fastcache-node7:6379,fastcache-node8:6379,fastcache-node9:6379,fastcache-node10:6379"]
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "6379"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    depends_on:
+      - fastcache-node1
+      - fastcache-node2
+      - fastcache-node3
+      - fastcache-node4
+
+  fastcache-node6:
+    build: .
+    container_name: fastcache-node6
+    hostname: fastcache-node6
+    ports:
+      - "7006:6379"
+    environment:
+      - NODE_ID=node6
+      - NODE_HOST=fastcache-node6
+      - NODE_PORT=6379
+      - CLUSTER_MODE=true
+      - PERSISTENCE_ENABLED=true
+      - CLUSTER_NODES=fastcache-node1:6379,fastcache-node2:6379,fastcache-node3:6379,fastcache-node4:6379,fastcache-node5:6379,fastcache-node6:6379,fastcache-node7:6379,fastcache-node8:6379,fastcache-node9:6379,fastcache-node10:6379
+    volumes:
+      - fastcache_data6:/app/data
+      - fastcache_logs6:/app/logs
+    networks:
+      - fastcache_network
+    command: ["java", "-jar", "build/libs/FastCache-1.0.0-fat.jar", "--host", "0.0.0.0", "--port", "6379", "--node-id", "node6", "--cluster-mode", "--persistence-enabled", "--cluster-nodes", "fastcache-node1:6379,fastcache-node2:6379,fastcache-node3:6379,fastcache-node4:6379,fastcache-node5:6379,fastcache-node6:6379,fastcache-node7:6379,fastcache-node8:6379,fastcache-node9:6379,fastcache-node10:6379"]
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "6379"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    depends_on:
+      - fastcache-node1
+      - fastcache-node2
+      - fastcache-node3
+      - fastcache-node4
+      - fastcache-node5
+
+  fastcache-node7:
+    build: .
+    container_name: fastcache-node7
+    hostname: fastcache-node7
+    ports:
+      - "7007:6379"
+    environment:
+      - NODE_ID=node7
+      - NODE_HOST=fastcache-node7
+      - NODE_PORT=6379
+      - CLUSTER_MODE=true
+      - PERSISTENCE_ENABLED=true
+      - CLUSTER_NODES=fastcache-node1:6379,fastcache-node2:6379,fastcache-node3:6379,fastcache-node4:6379,fastcache-node5:6379,fastcache-node6:6379,fastcache-node7:6379,fastcache-node8:6379,fastcache-node9:6379,fastcache-node10:6379
+    volumes:
+      - fastcache_data7:/app/data
+      - fastcache_logs7:/app/logs
+    networks:
+      - fastcache_network
+    command: ["java", "-jar", "build/libs/FastCache-1.0.0-fat.jar", "--host", "0.0.0.0", "--port", "6379", "--node-id", "node7", "--cluster-mode", "--persistence-enabled", "--cluster-nodes", "fastcache-node1:6379,fastcache-node2:6379,fastcache-node3:6379,fastcache-node4:6379,fastcache-node5:6379,fastcache-node6:6379,fastcache-node7:6379,fastcache-node8:6379,fastcache-node9:6379,fastcache-node10:6379"]
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "6379"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    depends_on:
+      - fastcache-node1
+      - fastcache-node2
+      - fastcache-node3
+      - fastcache-node4
+      - fastcache-node5
+      - fastcache-node6
+
+  fastcache-node8:
+    build: .
+    container_name: fastcache-node8
+    hostname: fastcache-node8
+    ports:
+      - "7008:6379"
+    environment:
+      - NODE_ID=node8
+      - NODE_HOST=fastcache-node8
+      - NODE_PORT=6379
+      - CLUSTER_MODE=true
+      - PERSISTENCE_ENABLED=true
+      - CLUSTER_NODES=fastcache-node1:6379,fastcache-node2:6379,fastcache-node3:6379,fastcache-node4:6379,fastcache-node5:6379,fastcache-node6:6379,fastcache-node7:6379,fastcache-node8:6379,fastcache-node9:6379,fastcache-node10:6379
+    volumes:
+      - fastcache_data8:/app/data
+      - fastcache_logs8:/app/logs
+    networks:
+      - fastcache_network
+    command: ["java", "-jar", "build/libs/FastCache-1.0.0-fat.jar", "--host", "0.0.0.0", "--port", "6379", "--node-id", "node8", "--cluster-mode", "--persistence-enabled", "--cluster-nodes", "fastcache-node1:6379,fastcache-node2:6379,fastcache-node3:6379,fastcache-node4:6379,fastcache-node5:6379,fastcache-node6:6379,fastcache-node7:6379,fastcache-node8:6379,fastcache-node9:6379,fastcache-node10:6379"]
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "6379"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    depends_on:
+      - fastcache-node1
+      - fastcache-node2
+      - fastcache-node3
+      - fastcache-node4
+      - fastcache-node5
+      - fastcache-node6
+      - fastcache-node7
+
+  fastcache-node9:
+    build: .
+    container_name: fastcache-node9
+    hostname: fastcache-node9
+    ports:
+      - "7009:6379"
+    environment:
+      - NODE_ID=node9
+      - NODE_HOST=fastcache-node9
+      - NODE_PORT=6379
+      - CLUSTER_MODE=true
+      - PERSISTENCE_ENABLED=true
+      - CLUSTER_NODES=fastcache-node1:6379,fastcache-node2:6379,fastcache-node3:6379,fastcache-node4:6379,fastcache-node5:6379,fastcache-node6:6379,fastcache-node7:6379,fastcache-node8:6379,fastcache-node9:6379,fastcache-node10:6379
+    volumes:
+      - fastcache_data9:/app/data
+      - fastcache_logs9:/app/logs
+    networks:
+      - fastcache_network
+    command: ["java", "-jar", "build/libs/FastCache-1.0.0-fat.jar", "--host", "0.0.0.0", "--port", "6379", "--node-id", "node9", "--cluster-mode", "--persistence-enabled", "--cluster-nodes", "fastcache-node1:6379,fastcache-node2:6379,fastcache-node3:6379,fastcache-node4:6379,fastcache-node5:6379,fastcache-node6:6379,fastcache-node7:6379,fastcache-node8:6379,fastcache-node9:6379,fastcache-node10:6379"]
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "6379"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    depends_on:
+      - fastcache-node1
+      - fastcache-node2
+      - fastcache-node3
+      - fastcache-node4
+      - fastcache-node5
+      - fastcache-node6
+      - fastcache-node7
+      - fastcache-node8
+
+  fastcache-node10:
+    build: .
+    container_name: fastcache-node10
+    hostname: fastcache-node10
+    ports:
+      - "7010:6379"
+    environment:
+      - NODE_ID=node10
+      - NODE_HOST=fastcache-node10
+      - NODE_PORT=6379
+      - CLUSTER_MODE=true
+      - PERSISTENCE_ENABLED=true
+      - CLUSTER_NODES=fastcache-node1:6379,fastcache-node2:6379,fastcache-node3:6379,fastcache-node4:6379,fastcache-node5:6379,fastcache-node6:6379,fastcache-node7:6379,fastcache-node8:6379,fastcache-node9:6379,fastcache-node10:6379
+    volumes:
+      - fastcache_data10:/app/data
+      - fastcache_logs10:/app/logs
+    networks:
+      - fastcache_network
+    command: ["java", "-jar", "build/libs/FastCache-1.0.0-fat.jar", "--host", "0.0.0.0", "--port", "6379", "--node-id", "node10", "--cluster-mode", "--persistence-enabled", "--cluster-nodes", "fastcache-node1:6379,fastcache-node2:6379,fastcache-node3:6379,fastcache-node4:6379,fastcache-node5:6379,fastcache-node6:6379,fastcache-node7:6379,fastcache-node8:6379,fastcache-node9:6379,fastcache-node10:6379"]
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "6379"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    depends_on:
+      - fastcache-node1
+      - fastcache-node2
+      - fastcache-node3
+      - fastcache-node4
+      - fastcache-node5
+      - fastcache-node6
+      - fastcache-node7
+      - fastcache-node8
+      - fastcache-node9
+
+volumes:
+  # Health checker logs
+  fastcache_health_logs:
+  
+  # Proxy volumes
+  fastcache_proxy1_logs:
+  fastcache_proxy2_logs:
+  fastcache_proxy3_logs:
+  
+  # Node volumes
+  fastcache_data1:
+  fastcache_data2:
+  fastcache_data3:
+  fastcache_data4:
+  fastcache_data5:
+  fastcache_data6:
+  fastcache_data7:
+  fastcache_data8:
+  fastcache_data9:
+  fastcache_data10:
+  
+  fastcache_logs1:
+  fastcache_logs2:
+  fastcache_logs3:
+  fastcache_logs4:
+  fastcache_logs5:
+  fastcache_logs6:
+  fastcache_logs7:
+  fastcache_logs8:
+  fastcache_logs9:
+  fastcache_logs10:
+
+networks:
+  fastcache_network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16 

@@ -1,0 +1,174 @@
+plugins {
+    id 'java'
+    id 'application'
+    id 'jacoco'
+}
+
+group = 'com.fastcache'
+version = '1.0.0'
+description = 'A high-performance distributed cache system with consistent hashing'
+
+java {
+    sourceCompatibility = JavaVersion.VERSION_17
+    targetCompatibility = JavaVersion.VERSION_17
+}
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    // Netty for network communication
+    implementation 'io.netty:netty-all:4.1.100.Final'
+    
+    // JSON processing
+    implementation 'com.fasterxml.jackson.core:jackson-databind:2.15.2'
+    
+    // Logging
+    implementation 'org.slf4j:slf4j-api:2.0.9'
+    implementation 'ch.qos.logback:logback-classic:1.4.11'
+    
+    // Spring Boot dependencies moved to health-checker subproject
+    
+    // Utilities
+    implementation 'org.apache.commons:commons-lang3:3.12.0'
+    implementation 'com.google.guava:guava:32.1.2-jre'
+    
+    // Testing
+    testImplementation 'org.junit.jupiter:junit-jupiter:5.10.0'
+    testImplementation 'org.mockito:mockito-core:5.7.0'
+    testImplementation 'org.mockito:mockito-junit-jupiter:5.7.0'
+    // Spring Boot test dependencies moved to health-checker subproject
+}
+
+application {
+    mainClass = 'com.fastcache.server.FastCacheServer'
+}
+
+test {
+    useJUnitPlatform()
+    testLogging {
+        events "passed", "skipped", "failed"
+    }
+}
+
+jacoco {
+    toolVersion = "0.8.10"
+}
+
+jacocoTestReport {
+    reports {
+        xml.required = true
+        html.required = true
+    }
+}
+
+test.finalizedBy jacocoTestReport
+
+jar {
+    manifest {
+        attributes(
+            'Main-Class': 'com.fastcache.server.FastCacheServer',
+            'Implementation-Title': project.name,
+            'Implementation-Version': project.version,
+            'Implementation-Vendor': 'FastCache Team'
+        )
+    }
+    
+    // Include all dependencies in the JAR
+    from {
+        configurations.runtimeClasspath.collect { it.isDirectory() ? it : zipTree(it) }
+    }
+    
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+}
+
+// Create a distribution JAR without dependencies
+task distJar(type: Jar) {
+    archiveClassifier = 'dist'
+    from sourceSets.main.output
+    manifest {
+        attributes(
+            'Main-Class': 'com.fastcache.server.FastCacheServer',
+            'Implementation-Title': project.name,
+            'Implementation-Version': project.version,
+            'Implementation-Vendor': 'FastCache Team'
+        )
+    }
+}
+
+// Create a fat JAR with all dependencies
+task fatJar(type: Jar) {
+    archiveClassifier = 'fat'
+    from sourceSets.main.output
+    from {
+        configurations.runtimeClasspath.collect { it.isDirectory() ? it : zipTree(it) }
+    }
+    manifest {
+        attributes(
+            'Main-Class': 'com.fastcache.server.FastCacheServer',
+            'Implementation-Title': project.name,
+            'Implementation-Version': project.version,
+            'Implementation-Vendor': 'FastCache Team'
+        )
+    }
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+}
+
+// Task to run the server
+task runServer(type: JavaExec) {
+    group = 'application'
+    description = 'Run the FastCache server'
+    mainClass = 'com.fastcache.server.FastCacheServer'
+    classpath = sourceSets.main.runtimeClasspath
+    standardInput = System.in
+    
+    // Default arguments
+    args = ['--host', 'localhost', '--port', '6379']
+}
+
+// Task to run the example
+task runExample(type: JavaExec) {
+    group = 'application'
+    description = 'Run the FastCache example'
+    mainClass = 'com.fastcache.examples.CacheExample'
+    classpath = sourceSets.main.runtimeClasspath
+}
+
+// Task to build and run tests
+task buildAndTest {
+    group = 'verification'
+    description = 'Build the project and run tests'
+    dependsOn clean, test, jar
+}
+
+// Task to create a complete distribution
+task createDistribution(type: Copy) {
+    group = 'distribution'
+    description = 'Create a complete distribution package'
+    dependsOn fatJar
+    
+    from fatJar
+    from 'README.md'
+    from 'LICENSE'
+    into "dist/${project.name}-${project.version}"
+    
+    doLast {
+        copy {
+            from 'src/main/resources'
+            into "dist/${project.name}-${project.version}/config"
+        }
+    }
+}
+
+// Configure all Java compilation tasks
+tasks.withType(JavaCompile) {
+    options.encoding = 'UTF-8'
+    options.compilerArgs += ['-Xlint:unchecked', '-Xlint:deprecation']
+}
+
+// Configure all test tasks
+tasks.withType(Test) {
+    maxParallelForks = Runtime.runtime.availableProcessors().intdiv(2) ?: 1
+    forkEvery = 100
+} 
