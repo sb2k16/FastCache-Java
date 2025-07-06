@@ -127,6 +127,18 @@ public class ConsistentHash {
     }
     
     /**
+     * Clears all nodes from the hash ring.
+     */
+    public void clear() {
+        lock.writeLock().lock();
+        try {
+            circle.clear();
+        } finally {
+            lock.writeLock().unlock();
+        }
+    }
+    
+    /**
      * Gets the cache node responsible for a given key.
      * @param key The key to find the responsible node for
      * @return The cache node responsible for the key, or null if no nodes exist

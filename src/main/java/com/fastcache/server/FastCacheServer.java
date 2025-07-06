@@ -4,6 +4,7 @@ import com.fastcache.cluster.CacheNode;
 import com.fastcache.cluster.DistributedCacheManager;
 import com.fastcache.core.CacheEngine;
 import com.fastcache.core.EvictionPolicy;
+import com.fastcache.core.PersistentCacheEngine;
 import com.fastcache.protocol.CacheCommand;
 import com.fastcache.protocol.CacheResponse;
 import io.netty.bootstrap.ServerBootstrap;
@@ -16,6 +17,7 @@ import io.netty.handler.codec.bytes.ByteArrayEncoder;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
@@ -32,6 +34,8 @@ public class FastCacheServer {
     private final DistributedCacheManager clusterManager;
     private final CacheEngine localEngine;
     private final CacheNode localNode;
+    private final boolean persistenceEnabled;
+    private final String dataDir;
     
     private EventLoopGroup bossGroup;
     private EventLoopGroup workerGroup;
@@ -39,25 +43,44 @@ public class FastCacheServer {
     private volatile boolean running = false;
     
     public FastCacheServer(String host, int port) {
-        this(host, port, "node-" + host + "-" + port);
+        this(host, port, "node-" + host + "-" + port, false, "/app/data");
     }
     
     public FastCacheServer(String host, int port, String nodeId) {
+        this(host, port, nodeId, false, "/app/data");
+    }
+    
+    public FastCacheServer(String host, int port, String nodeId, boolean persistenceEnabled, String dataDir) {
         this.host = host;
         this.port = port;
         this.nodeId = nodeId;
+        this.persistenceEnabled = persistenceEnabled;
+        this.dataDir = dataDir;
         
-        // Initialize local cache engine
-        this.localEngine = new CacheEngine(10000, new EvictionPolicy.LRU());
+        // Initialize local cache engine based on persistence setting
+        try {
+            if (persistenceEnabled) {
+                logger.info("Initializing persistent cache engine with data directory: {}", dataDir);
+                this.localEngine = new PersistentCacheEngine(dataDir, nodeId, 10000, new EvictionPolicy.LRU());
+                logger.info("Persistent cache engine initialized successfully");
+            } else {
+                logger.info("Initializing in-memory cache engine");
+                this.localEngine = new CacheEngine(10000, new EvictionPolicy.LRU());
+            }
+        } catch (IOException e) {
+            logger.error("Failed to initialize cache engine", e);
+            throw new RuntimeException("Cache engine initialization failed", e);
+        }
         
         // Initialize local node
         this.localNode = new CacheNode(nodeId, host, port);
         
         // Initialize distributed cache manager
-        this.clusterManager = new DistributedCacheManager(150, 2, true);
+        this.clusterManager = new DistributedCacheManager(150, 2, true, persistenceEnabled, dataDir, 10000, new EvictionPolicy.LRU());
         this.clusterManager.addNode(localNode, localEngine);
         
-        logger.info("FastCache server initialized: {}:{} (node: {})", host, port, nodeId);
+        logger.info("FastCache server initialized: {}:{} (node: {}, persistence: {})", 
+                   host, port, nodeId, persistenceEnabled ? "enabled" : "disabled");
     }
     
     /**
@@ -321,6 +344,10 @@ public class FastCacheServer {
         String host = "localhost";
         int port = 6379;
         String nodeId = null;
+        boolean persistenceEnabled = false;
+        String dataDir = "/app/data";
+        boolean clusterMode = false;
+        String clusterNodes = "";
         
         // Parse command line arguments
         for (int i = 0; i < args.length; i++) {
@@ -342,13 +369,33 @@ public class FastCacheServer {
                         nodeId = args[++i];
                     }
                     break;
+                case "--persistence-enabled":
+                    persistenceEnabled = true;
+                    break;
+                case "--data-dir":
+                    if (i + 1 < args.length) {
+                        dataDir = args[++i];
+                    }
+                    break;
+                case "--cluster-mode":
+                    clusterMode = true;
+                    break;
+                case "--cluster-nodes":
+                    if (i + 1 < args.length) {
+                        clusterNodes = args[++i];
+                    }
+                    break;
                 case "--help":
                     System.out.println("Usage: FastCacheServer [options]");
                     System.out.println("Options:");
-                    System.out.println("  -h, --host HOST     Server host (default: localhost)");
-                    System.out.println("  -p, --port PORT     Server port (default: 6379)");
-                    System.out.println("  --node-id ID        Node ID (default: node-HOST-PORT)");
-                    System.out.println("  --help              Show this help message");
+                    System.out.println("  -h, --host HOST              Server host (default: localhost)");
+                    System.out.println("  -p, --port PORT              Server port (default: 6379)");
+                    System.out.println("  --node-id ID                 Node ID (default: node-HOST-PORT)");
+                    System.out.println("  --persistence-enabled        Enable data persistence");
+                    System.out.println("  --data-dir DIR               Data directory for persistence (default: /app/data)");
+                    System.out.println("  --cluster-mode               Enable cluster mode");
+                    System.out.println("  --cluster-nodes NODES        Comma-separated list of cluster nodes");
+                    System.out.println("  --help                       Show this help message");
                     System.exit(0);
                     break;
             }
@@ -358,7 +405,18 @@ public class FastCacheServer {
             nodeId = "node-" + host + "-" + port;
         }
         
-        FastCacheServer server = new FastCacheServer(host, port, nodeId);
+        // Check environment variables for persistence settings
+        String envPersistence = System.getenv("PERSISTENCE_ENABLED");
+        if (envPersistence != null && envPersistence.equalsIgnoreCase("true")) {
+            persistenceEnabled = true;
+        }
+        
+        String envDataDir = System.getenv("DATA_DIR");
+        if (envDataDir != null && !envDataDir.isEmpty()) {
+            dataDir = envDataDir;
+        }
+        
+        FastCacheServer server = new FastCacheServer(host, port, nodeId, persistenceEnabled, dataDir);
         
         // Add shutdown hook
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
@@ -371,6 +429,9 @@ public class FastCacheServer {
         } catch (InterruptedException e) {
             logger.error("Server interrupted", e);
             Thread.currentThread().interrupt();
+        } catch (Exception e) {
+            logger.error("Failed to start server", e);
+            System.exit(1);
         }
     }
 } 

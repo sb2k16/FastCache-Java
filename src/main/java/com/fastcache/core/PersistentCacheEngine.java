@@ -251,24 +251,36 @@ public class PersistentCacheEngine extends CacheEngine {
     
     /**
      * Gets all cache entries for snapshot creation.
-     * This is a simplified version - in a real implementation,
-     * you'd need to access the internal cache map.
      */
     private Map<String, CacheEntry> getAllEntries() {
-        // Simplified implementation - returns empty map
-        // In a real implementation, you'd access the internal cache map
-        return new ConcurrentHashMap<>();
+        // Use reflection to access the private cache field from parent class
+        try {
+            java.lang.reflect.Field cacheField = CacheEngine.class.getDeclaredField("cache");
+            cacheField.setAccessible(true);
+            @SuppressWarnings("unchecked")
+            Map<String, CacheEntry> cache = (Map<String, CacheEntry>) cacheField.get(this);
+            return new ConcurrentHashMap<>(cache);
+        } catch (Exception e) {
+            System.err.println("Failed to access cache entries: " + e.getMessage());
+            return new ConcurrentHashMap<>();
+        }
     }
     
     /**
      * Gets all sorted sets for snapshot creation.
-     * This is a simplified version - in a real implementation,
-     * you'd need to access the internal sorted sets map.
      */
     private Map<String, SortedSet> getAllSortedSets() {
-        // Simplified implementation - returns empty map
-        // In a real implementation, you'd access the internal sorted sets map
-        return new ConcurrentHashMap<>();
+        // Use reflection to access the private sortedSets field from parent class
+        try {
+            java.lang.reflect.Field sortedSetsField = CacheEngine.class.getDeclaredField("sortedSets");
+            sortedSetsField.setAccessible(true);
+            @SuppressWarnings("unchecked")
+            Map<String, SortedSet> sortedSets = (Map<String, SortedSet>) sortedSetsField.get(this);
+            return new ConcurrentHashMap<>(sortedSets);
+        } catch (Exception e) {
+            System.err.println("Failed to access sorted sets: " + e.getMessage());
+            return new ConcurrentHashMap<>();
+        }
     }
     
     // Override CacheEngine methods to add persistence

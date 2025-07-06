@@ -443,4 +443,59 @@ For issues and questions:
 
 ---
 
-**FastCache**: High-performance distributed caching with centralized health monitoring and Redis compatibility. 
+**FastCache**: High-performance distributed caching with centralized health monitoring and Redis compatibility.
+
+# FastCache - Quick Start
+
+## Standalone In-Memory or Persistent Cache
+
+```java
+import com.fastcache.core.FastCache;
+import com.fastcache.core.CacheEntry;
+
+// In-memory cache
+FastCache cache = FastCache.builder()
+    .maxSize(10000)
+    .evictionPolicy(new EvictionPolicy.LRU())
+    .build();
+
+// Persistent cache
+FastCache persistentCache = FastCache.builder()
+    .enablePersistence(true)
+    .dataDir("/app/data")
+    .maxSize(10000)
+    .evictionPolicy(new EvictionPolicy.LRU())
+    .build();
+
+cache.set("user:1", "Alice", CacheEntry.EntryType.STRING);
+Object value = cache.get("user:1");
+```
+
+## Distributed Cluster with Persistence
+
+```java
+import com.fastcache.cluster.DistributedCacheManager;
+import com.fastcache.cluster.CacheNode;
+
+DistributedCacheManager cluster = DistributedCacheManager.builder()
+    .virtualNodes(150)
+    .replicationFactor(2)
+    .enableReplication(true)
+    .enablePersistence(true)
+    .dataDir("/app/data/cluster")
+    .maxSize(10000)
+    .evictionPolicy(new EvictionPolicy.LRU())
+    .build();
+
+// Add nodes (each node will use PersistentCacheEngine if enabled)
+cluster.addNode(new CacheNode("node1", "localhost", 6379), "node1");
+cluster.addNode(new CacheNode("node2", "localhost", 6380), "node2");
+
+// Use the cluster as usual
+cluster.set("key", "value", CacheEntry.EntryType.STRING);
+```
+
+## Notes
+- Use `enablePersistence(true)` and `dataDir(...)` to enable and configure persistence.
+- Each node in the cluster will store its data in a subdirectory of `dataDir` named after the node ID.
+- The builder pattern is available for both standalone and distributed cache modes. 

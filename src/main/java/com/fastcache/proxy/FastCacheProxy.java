@@ -2,6 +2,7 @@ package com.fastcache.proxy;
 
 import com.fastcache.cluster.CacheNode;
 import com.fastcache.cluster.ConsistentHash;
+import com.fastcache.discovery.ServiceDiscoveryClient;
 import com.fastcache.protocol.CacheCommand;
 import com.fastcache.protocol.CacheResponse;
 import io.netty.bootstrap.ServerBootstrap;
@@ -21,12 +22,13 @@ import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * FastCache proxy server that routes client requests to healthy cache nodes using consistent hashing.
- * Queries the centralized health checker to avoid routing to unhealthy nodes.
+ * Integrates with service discovery for dynamic node discovery and health checking.
  */
 public class FastCacheProxy {
     private final ConsistentHash consistentHash;
     private final Map<String, CacheNodeConnection> nodeConnections;
     private final HealthServiceClient healthServiceClient;
+    private final ServiceDiscoveryClient serviceDiscoveryClient;
     private final String host;
     private final int port;
     private final String proxyId;
@@ -34,52 +36,31 @@ public class FastCacheProxy {
     private EventLoopGroup bossGroup;
     private EventLoopGroup workerGroup;
 
-    public FastCacheProxy(String host, int port, String proxyId, List<CacheNode> nodes, String healthServiceUrl) {
+    public FastCacheProxy(String host, int port, String proxyId, 
+                         String serviceDiscoveryUrl, String healthServiceUrl) {
         this.host = host;
         this.port = port;
         this.proxyId = proxyId;
         this.consistentHash = new ConsistentHash(150);
         this.nodeConnections = new ConcurrentHashMap<>();
         this.healthServiceClient = new HealthServiceClient(healthServiceUrl);
+        this.serviceDiscoveryClient = new ServiceDiscoveryClient(serviceDiscoveryUrl);
         
-        // Initialize node connections
-        for (CacheNode node : nodes) {
-            consistentHash.addNode(node);
-            CacheNodeConnection connection = new CacheNodeConnection(node, new NioEventLoopGroup(1));
-            nodeConnections.put(node.getId(), connection);
-            
-            // Connect to the node with retry logic
-            connectWithRetry(connection, node);
-        }
-        System.out.println("FastCacheProxy " + proxyId + " initialized with " + nodes.size() + " nodes");
+        System.out.println("FastCacheProxy " + proxyId + " initialized");
+        System.out.println("Service Discovery URL: " + serviceDiscoveryUrl);
+        System.out.println("Health Service URL: " + healthServiceUrl);
     }
 
     /**
-     * Connects to a node with retry logic for failed connections.
-     */
-    private void connectWithRetry(CacheNodeConnection connection, CacheNode node) {
-        System.out.println("Attempting to connect to node " + node.getId() + " at " + node.getHost() + ":" + node.getPort());
-        connection.connect().exceptionally(throwable -> {
-            System.err.println("Failed to connect to node " + node.getId() + ": " + throwable.getMessage());
-            System.err.println("Exception type: " + throwable.getClass().getSimpleName());
-            // Schedule retry after 5 seconds
-            new Thread(() -> {
-                try {
-                    Thread.sleep(5000);
-                    System.out.println("Retrying connection to node " + node.getId());
-                    connectWithRetry(connection, node);
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                }
-            }).start();
-            return null;
-        });
-    }
-
-    /**
-     * Starts the proxy server.
+     * Starts the proxy server with dynamic node discovery.
      */
     public void start() throws Exception {
+        // Start service discovery client for dynamic node discovery
+        serviceDiscoveryClient.startPeriodicRefresh();
+        
+        // Initial node discovery
+        refreshNodes();
+        
         bossGroup = new NioEventLoopGroup(1);
         workerGroup = new NioEventLoopGroup();
         
@@ -108,50 +89,102 @@ public class FastCacheProxy {
     }
 
     /**
-     * Shuts down the proxy server.
+     * Refreshes the node list from service discovery and updates connections.
      */
-    public void shutdown() {
-        if (serverChannel != null) {
-            serverChannel.close();
+    private void refreshNodes() {
+        try {
+            List<CacheNode> healthyNodes = serviceDiscoveryClient.getCachedNodes();
+            System.out.println("Discovered " + healthyNodes.size() + " healthy nodes");
+            
+            // Update consistent hash with new node list
+            consistentHash.clear();
+            for (CacheNode node : healthyNodes) {
+                consistentHash.addNode(node);
+                
+                // Create connection if it doesn't exist
+                if (!nodeConnections.containsKey(node.getId())) {
+                    CacheNodeConnection connection = new CacheNodeConnection(node, new NioEventLoopGroup(1));
+                    nodeConnections.put(node.getId(), connection);
+                    connectWithRetry(connection, node);
+                }
+            }
+            
+            // Remove connections for nodes that are no longer healthy
+            nodeConnections.entrySet().removeIf(entry -> {
+                String nodeId = entry.getKey();
+                boolean stillHealthy = healthyNodes.stream()
+                    .anyMatch(node -> node.getId().equals(nodeId));
+                
+                if (!stillHealthy) {
+                    System.out.println("Removing connection to unhealthy node: " + nodeId);
+                    entry.getValue().disconnect();
+                    return true;
+                }
+                return false;
+            });
+            
+        } catch (Exception e) {
+            System.err.println("Failed to refresh nodes: " + e.getMessage());
         }
-        if (bossGroup != null) {
-            bossGroup.shutdownGracefully();
-        }
-        if (workerGroup != null) {
-            workerGroup.shutdownGracefully();
-        }
-        nodeConnections.values().forEach(CacheNodeConnection::disconnect);
-        System.out.println("FastCacheProxy " + proxyId + " shutdown complete");
     }
 
     /**
-     * Routes a command to a healthy node.
+     * Connects to a node with retry logic for failed connections.
+     */
+    private void connectWithRetry(CacheNodeConnection connection, CacheNode node) {
+        System.out.println("Attempting to connect to node " + node.getId() + " at " + node.getHost() + ":" + node.getPort());
+        connection.connect().exceptionally(throwable -> {
+            System.err.println("Failed to connect to node " + node.getId() + ": " + throwable.getMessage());
+            // Schedule retry after 5 seconds
+            new Thread(() -> {
+                try {
+                    Thread.sleep(5000);
+                    System.out.println("Retrying connection to node " + node.getId());
+                    connectWithRetry(connection, node);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+            }).start();
+            return null;
+        });
+    }
+
+    /**
+     * Routes a command to a healthy node with health verification.
      */
     public CompletableFuture<CacheResponse> routeCommand(CacheCommand command) {
         String key = command.getKey();
         CacheNode node = consistentHash.getNode(key);
+        
         if (node == null) {
             return CompletableFuture.completedFuture(CacheResponse.error("No available nodes"));
         }
         
-        // Temporarily skip health checks for testing
-        CacheNodeConnection connection = nodeConnections.get(node.getId());
-        if (connection != null) {
-            // Convert CacheCommand to simple text format that data nodes expect
-            String commandStr = buildCommandString(command);
-            return connection.sendCommand(commandStr)
-                    .thenApply(response -> {
-                        // Parse the JSON response from the data node
-                        try {
-                            return parseJsonResponse(response);
-                        } catch (Exception e) {
-                            return CacheResponse.error("Failed to parse response: " + e.getMessage());
-                        }
-                    })
-                    .exceptionally(ex -> CacheResponse.error("Node communication failed: " + ex.getMessage()));
-        }
-        
-        return CompletableFuture.completedFuture(CacheResponse.error("Node unavailable"));
+        // Additional health check before routing
+        return healthServiceClient.isNodeHealthy(node.getId())
+            .thenCompose(isHealthy -> {
+                if (!isHealthy) {
+                    System.err.println("Node " + node.getId() + " failed health check, skipping");
+                    // Try to find another node or return error
+                    return CompletableFuture.completedFuture(CacheResponse.error("Node unhealthy"));
+                }
+                
+                CacheNodeConnection connection = nodeConnections.get(node.getId());
+                if (connection != null) {
+                    String commandStr = buildCommandString(command);
+                    return connection.sendCommand(commandStr)
+                            .thenApply(response -> {
+                                try {
+                                    return parseJsonResponse(response);
+                                } catch (Exception e) {
+                                    return CacheResponse.error("Failed to parse response: " + e.getMessage());
+                                }
+                            })
+                            .exceptionally(ex -> CacheResponse.error("Node communication failed: " + ex.getMessage()));
+                }
+                
+                return CompletableFuture.completedFuture(CacheResponse.error("Node unavailable"));
+            });
     }
     
     private String buildCommandString(CacheCommand command) {
@@ -220,13 +253,33 @@ public class FastCacheProxy {
         }
     }
 
+    /**
+     * Shuts down the proxy server.
+     */
+    public void shutdown() {
+        if (serverChannel != null) {
+            serverChannel.close();
+        }
+        if (bossGroup != null) {
+            bossGroup.shutdownGracefully();
+        }
+        if (workerGroup != null) {
+            workerGroup.shutdownGracefully();
+        }
+        nodeConnections.values().forEach(CacheNodeConnection::disconnect);
+        if (serviceDiscoveryClient != null) {
+            serviceDiscoveryClient.stopPeriodicRefresh();
+        }
+        System.out.println("FastCacheProxy " + proxyId + " shutdown complete");
+    }
+
     public static void main(String[] args) {
         // Parse command line arguments
         String host = "0.0.0.0";
         int port = 6379;
         String proxyId = "proxy1";
+        String serviceDiscoveryUrl = "http://localhost:8080";
         String healthServiceUrl = "http://localhost:8080";
-        String clusterNodes = "";
 
         for (int i = 0; i < args.length; i++) {
             switch (args[i]) {
@@ -239,19 +292,16 @@ public class FastCacheProxy {
                 case "--proxy-id":
                     if (i + 1 < args.length) proxyId = args[++i];
                     break;
+                case "--service-discovery":
+                    if (i + 1 < args.length) serviceDiscoveryUrl = args[++i];
+                    break;
                 case "--health-service":
                     if (i + 1 < args.length) healthServiceUrl = args[++i];
-                    break;
-                case "--cluster-nodes":
-                    if (i + 1 < args.length) clusterNodes = args[++i];
                     break;
             }
         }
 
-        // Parse cluster nodes
-        List<CacheNode> nodes = parseClusterNodes(clusterNodes);
-        
-        FastCacheProxy proxy = new FastCacheProxy(host, port, proxyId, nodes, healthServiceUrl);
+        FastCacheProxy proxy = new FastCacheProxy(host, port, proxyId, serviceDiscoveryUrl, healthServiceUrl);
         
         // Add shutdown hook
         Runtime.getRuntime().addShutdownHook(new Thread(proxy::shutdown));
@@ -263,24 +313,5 @@ public class FastCacheProxy {
             e.printStackTrace();
             System.exit(1);
         }
-    }
-
-    private static List<CacheNode> parseClusterNodes(String clusterNodes) {
-        if (clusterNodes.isEmpty()) {
-            // Default nodes for testing (3 nodes)
-            return List.of(
-                new CacheNode("node1", "fastcache-node1", 6379),
-                new CacheNode("node2", "fastcache-node2", 6379),
-                new CacheNode("node3", "fastcache-node3", 6379)
-            );
-        }
-        
-        String[] nodeStrings = clusterNodes.split(",");
-        return List.of(nodeStrings).stream()
-                .map(nodeStr -> {
-                    String[] parts = nodeStr.split(":");
-                    return new CacheNode(parts[0], parts[0], Integer.parseInt(parts[1]));
-                })
-                .toList();
     }
 } 

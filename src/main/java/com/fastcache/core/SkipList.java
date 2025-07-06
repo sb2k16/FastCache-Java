@@ -1,24 +1,28 @@
 package com.fastcache.core;
 
+import java.io.Serializable;
 import java.util.*;
 
 /**
  * Generic Skip List implementation with O(log n) average time complexity for insert, delete, and search operations.
  * This implementation supports duplicate elements and maintains sorted order.
  */
-public class SkipList<T extends Comparable<T>> {
+@SuppressWarnings("unchecked")
+public class SkipList<T extends Comparable<T>> implements Serializable {
+    private static final long serialVersionUID = 1L;
     private static final int MAX_LEVEL = 32;
     private static final double PROBABILITY = 0.5;
     
     private final Node<T> head;
-    private final Random random;
+    private transient final Random random;
     private int size;
     private int currentMaxLevel;
     
     /**
      * Node in the skip list.
      */
-    private static class Node<T> {
+    private static class Node<T> implements Serializable {
+        private static final long serialVersionUID = 1L;
         private final T data;
         private final Node<T>[] forward;
         
@@ -50,6 +54,19 @@ public class SkipList<T extends Comparable<T>> {
         this.random = new Random();
         this.size = 0;
         this.currentMaxLevel = 1;
+    }
+    
+    private void readObject(java.io.ObjectInputStream in) throws java.io.IOException, ClassNotFoundException {
+        in.defaultReadObject();
+        // Reinitialize transient fields
+        java.lang.reflect.Field randomField;
+        try {
+            randomField = SkipList.class.getDeclaredField("random");
+            randomField.setAccessible(true);
+            randomField.set(this, new Random());
+        } catch (Exception e) {
+            throw new java.io.IOException("Failed to reinitialize Random field", e);
+        }
     }
     
     /**

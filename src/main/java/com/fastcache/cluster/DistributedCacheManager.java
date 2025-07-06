@@ -2,6 +2,10 @@ package com.fastcache.cluster;
 
 import com.fastcache.core.CacheEngine;
 import com.fastcache.core.CacheEntry;
+import com.fastcache.core.PersistentCacheEngine;
+import com.fastcache.core.PersistenceConfig;
+import com.fastcache.core.EvictionPolicy;
+import java.io.IOException;
 
 import java.util.Collection;
 import java.util.List;
@@ -23,22 +27,42 @@ public class DistributedCacheManager {
     private final ExecutorService executor;
     private final int replicationFactor;
     private final boolean enableReplication;
+    private final boolean persistenceEnabled;
+    private final String dataDir;
     
-    public DistributedCacheManager() {
-        this(150, 2, true);
+    public static class Builder {
+        private int virtualNodes = 150;
+        private int replicationFactor = 2;
+        private boolean enableReplication = true;
+        private boolean persistenceEnabled = false;
+        private String dataDir = "/app/data";
+        private int maxSize = 10000;
+        private EvictionPolicy evictionPolicy = new EvictionPolicy.LRU();
+
+        public Builder virtualNodes(int n) { this.virtualNodes = n; return this; }
+        public Builder replicationFactor(int n) { this.replicationFactor = n; return this; }
+        public Builder enableReplication(boolean b) { this.enableReplication = b; return this; }
+        public Builder enablePersistence(boolean b) { this.persistenceEnabled = b; return this; }
+        public Builder dataDir(String dir) { this.dataDir = dir; return this; }
+        public Builder maxSize(int n) { this.maxSize = n; return this; }
+        public Builder evictionPolicy(EvictionPolicy policy) { this.evictionPolicy = policy; return this; }
+        public DistributedCacheManager build() {
+            return new DistributedCacheManager(virtualNodes, replicationFactor, enableReplication, persistenceEnabled, dataDir, maxSize, evictionPolicy);
+        }
     }
-    
-    public DistributedCacheManager(int virtualNodes, int replicationFactor, boolean enableReplication) {
+
+    public static Builder builder() { return new Builder(); }
+
+    public DistributedCacheManager(int virtualNodes, int replicationFactor, boolean enableReplication, boolean persistenceEnabled, String dataDir, int maxSize, EvictionPolicy evictionPolicy) {
         this.consistentHash = new ConsistentHash(virtualNodes);
         this.nodes = new ConcurrentHashMap<>();
         this.localEngines = new ConcurrentHashMap<>();
         this.executor = Executors.newCachedThreadPool();
         this.replicationFactor = replicationFactor;
         this.enableReplication = enableReplication;
-        
-        System.out.println("Distributed cache manager initialized with virtualNodes=" + virtualNodes + 
-                          ", replicationFactor=" + replicationFactor + 
-                          ", enableReplication=" + enableReplication);
+        this.persistenceEnabled = persistenceEnabled;
+        this.dataDir = dataDir;
+        System.out.println("Distributed cache manager initialized with virtualNodes=" + virtualNodes + ", replicationFactor=" + replicationFactor + ", enableReplication=" + enableReplication + ", persistenceEnabled=" + persistenceEnabled);
     }
     
     /**
@@ -380,5 +404,19 @@ public class DistributedCacheManager {
             return String.format("ClusterStats{nodes=%d, virtualNodes=%d, totalSize=%d, hitRate=%.2f%%, distribution=%s}",
                     nodeCount, virtualNodeCount, getTotalSize(), getOverallHitRate() * 100, distributionStats);
         }
+    }
+
+    public void addNode(CacheNode node, String nodeId) {
+        CacheEngine engine;
+        if (persistenceEnabled) {
+            try {
+                engine = new PersistentCacheEngine(dataDir + "/" + nodeId, nodeId, 10000, new EvictionPolicy.LRU());
+            } catch (IOException e) {
+                throw new RuntimeException("Failed to create persistent cache engine for node " + nodeId, e);
+            }
+        } else {
+            engine = new CacheEngine(10000, new EvictionPolicy.LRU());
+        }
+        addNode(node, engine);
     }
 } 

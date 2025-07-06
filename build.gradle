@@ -28,7 +28,9 @@ dependencies {
     implementation 'org.slf4j:slf4j-api:2.0.9'
     implementation 'ch.qos.logback:logback-classic:1.4.11'
     
-    // Spring Boot dependencies moved to health-checker subproject
+    // Spring Boot for service discovery API
+    implementation 'org.springframework.boot:spring-boot-starter-web:3.2.0'
+    implementation 'org.springframework.boot:spring-boot-starter-actuator:3.2.0'
     
     // Utilities
     implementation 'org.apache.commons:commons-lang3:3.12.0'
@@ -38,7 +40,7 @@ dependencies {
     testImplementation 'org.junit.jupiter:junit-jupiter:5.10.0'
     testImplementation 'org.mockito:mockito-core:5.7.0'
     testImplementation 'org.mockito:mockito-junit-jupiter:5.7.0'
-    // Spring Boot test dependencies moved to health-checker subproject
+    testImplementation 'org.springframework.boot:spring-boot-starter-test:3.2.0'
 }
 
 application {
@@ -132,6 +134,14 @@ task runExample(type: JavaExec) {
     group = 'application'
     description = 'Run the FastCache example'
     mainClass = 'com.fastcache.examples.CacheExample'
+    classpath = sourceSets.main.runtimeClasspath
+}
+
+// Task to run the persistence example
+task runPersistenceExample(type: JavaExec) {
+    group = 'application'
+    description = 'Run the FastCache persistence example'
+    mainClass = 'com.fastcache.examples.PersistenceExample'
     classpath = sourceSets.main.runtimeClasspath
 }
 

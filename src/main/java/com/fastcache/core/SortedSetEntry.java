@@ -1,12 +1,14 @@
 package com.fastcache.core;
 
+import java.io.Serializable;
 import java.util.Objects;
 
 /**
  * Represents an entry in a sorted set with a member and its associated score.
  * Entries are ordered by score first, then by member lexicographically.
  */
-public class SortedSetEntry implements Comparable<SortedSetEntry> {
+public class SortedSetEntry implements Comparable<SortedSetEntry>, Serializable {
+    private static final long serialVersionUID = 1L;
     private final String member;
     private final double score;
     

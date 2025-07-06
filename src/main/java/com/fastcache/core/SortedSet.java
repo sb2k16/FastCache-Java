@@ -1,5 +1,6 @@
 package com.fastcache.core;
 
+import java.io.Serializable;
 import java.util.*;
 import java.util.concurrent.locks.ReadWriteLock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
@@ -8,7 +9,8 @@ import java.util.concurrent.locks.ReentrantReadWriteLock;
  * Thread-safe sorted set implementation with O(log n) average time complexity for most operations.
  * Uses a skip list for score-based ordering and a hash map for O(1) member lookups.
  */
-public class SortedSet {
+public class SortedSet implements Serializable {
+    private static final long serialVersionUID = 1L;
     private final SkipList<SortedSetEntry> scoreIndex;
     private final Map<String, Double> memberToScore;
     private final ReadWriteLock lock;

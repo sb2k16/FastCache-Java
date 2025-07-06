@@ -10,12 +10,15 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.locks.ReadWriteLock;
-import java.util.concurrent.locks.ReentrantReadWriteLock;
 
 /**
  * Core cache engine that provides thread-safe in-memory caching with
  * configurable eviction policies and expiration support.
+ * 
+ * This implementation uses fine-grained locking for optimal concurrency:
+ * - ConcurrentHashMap for thread-safe cache operations
+ * - Fine-grained locks only for eviction policy operations
+ * - No global read-writer lock to maximize concurrency
  */
 public class CacheEngine {
     
@@ -23,7 +26,8 @@ public class CacheEngine {
     private final Map<String, SortedSet> sortedSets;
     private final EvictionPolicy evictionPolicy;
     private final int maxSize;
-    private final ReadWriteLock lock = new ReentrantReadWriteLock();
+    private final Object evictionLock = new Object(); // Fine-grained lock for eviction operations
+    private final Object sortedSetLock = new Object(); // Fine-grained lock for sorted set operations
     private final ScheduledExecutorService cleanupExecutor;
     
     private volatile long hits;
@@ -63,22 +67,23 @@ public class CacheEngine {
         Objects.requireNonNull(key, "Key cannot be null");
         Objects.requireNonNull(value, "Value cannot be null");
         
-        lock.writeLock().lock();
-        try {
-            // Check if we need to evict entries
-            if (cache.size() >= maxSize && !cache.containsKey(key)) {
+        // Check if we need to evict entries (ConcurrentHashMap is thread-safe)
+        if (cache.size() >= maxSize && !cache.containsKey(key)) {
+            synchronized(evictionLock) {
                 evictEntries();
             }
-            
-            CacheEntry entry = new CacheEntry(key, value, ttlSeconds, type);
-            cache.put(key, entry);
-            evictionPolicy.onAdd(entry);
-            
-            System.out.println("Stored key: " + key);
-            return true;
-        } finally {
-            lock.writeLock().unlock();
         }
+        
+        CacheEntry entry = new CacheEntry(key, value, ttlSeconds, type);
+        cache.put(key, entry);
+        
+        // Eviction policy operations need synchronization
+        synchronized(evictionLock) {
+            evictionPolicy.onAdd(entry);
+        }
+        
+        System.out.println("Stored key: " + key);
+        return true;
     }
     
     /**
@@ -100,31 +105,33 @@ public class CacheEngine {
     public Object get(String key) {
         Objects.requireNonNull(key, "Key cannot be null");
         
-        lock.readLock().lock();
-        try {
-            CacheEntry entry = cache.get(key);
-            
-            if (entry == null) {
-                misses++;
-                System.out.println("Cache miss for key: " + key);
-                return null;
-            }
-            
-            if (entry.isExpired()) {
-                cache.remove(key);
-                evictionPolicy.onRemove(entry);
+        CacheEntry entry = cache.get(key);
+        
+        if (entry == null) {
+            misses++;
+            System.out.println("Cache miss for key: " + key);
+            return null;
+        }
+        
+        if (entry.isExpired()) {
+            // Remove expired entry atomically
+            if (cache.remove(key, entry)) {
+                synchronized(evictionLock) {
+                    evictionPolicy.onRemove(entry);
+                }
                 misses++;
                 System.out.println("Expired entry removed for key: " + key);
-                return null;
             }
-            
-            hits++;
-            evictionPolicy.onAccess(entry);
-            System.out.println("Cache hit for key: " + key);
-            return entry.getValue();
-        } finally {
-            lock.readLock().unlock();
+            return null;
         }
+        
+        hits++;
+        // Eviction policy access tracking needs synchronization
+        synchronized(evictionLock) {
+            evictionPolicy.onAccess(entry);
+        }
+        System.out.println("Cache hit for key: " + key);
+        return entry.getValue();
     }
     
     /**
@@ -135,18 +142,15 @@ public class CacheEngine {
     public boolean delete(String key) {
         Objects.requireNonNull(key, "Key cannot be null");
         
-        lock.writeLock().lock();
-        try {
-            CacheEntry entry = cache.remove(key);
-            if (entry != null) {
+        CacheEntry entry = cache.remove(key);
+        if (entry != null) {
+            synchronized(evictionLock) {
                 evictionPolicy.onRemove(entry);
-                System.out.println("Deleted key: " + key);
-                return true;
             }
-            return false;
-        } finally {
-            lock.writeLock().unlock();
+            System.out.println("Deleted key: " + key);
+            return true;
         }
+        return false;
     }
     
     /**
@@ -157,23 +161,22 @@ public class CacheEngine {
     public boolean exists(String key) {
         Objects.requireNonNull(key, "Key cannot be null");
         
-        lock.readLock().lock();
-        try {
-            CacheEntry entry = cache.get(key);
-            if (entry == null) {
-                return false;
-            }
-            
-            if (entry.isExpired()) {
-                cache.remove(key);
-                evictionPolicy.onRemove(entry);
-                return false;
-            }
-            
-            return true;
-        } finally {
-            lock.readLock().unlock();
+        CacheEntry entry = cache.get(key);
+        if (entry == null) {
+            return false;
         }
+        
+        if (entry.isExpired()) {
+            // Remove expired entry atomically
+            if (cache.remove(key, entry)) {
+                synchronized(evictionLock) {
+                    evictionPolicy.onRemove(entry);
+                }
+            }
+            return false;
+        }
+        
+        return true;
     }
     
     /**
@@ -184,23 +187,22 @@ public class CacheEngine {
     public long ttl(String key) {
         Objects.requireNonNull(key, "Key cannot be null");
         
-        lock.readLock().lock();
-        try {
-            CacheEntry entry = cache.get(key);
-            if (entry == null) {
-                return -2;
-            }
-            
-            if (entry.isExpired()) {
-                cache.remove(key);
-                evictionPolicy.onRemove(entry);
-                return -2;
-            }
-            
-            return entry.getRemainingTtl();
-        } finally {
-            lock.readLock().unlock();
+        CacheEntry entry = cache.get(key);
+        if (entry == null) {
+            return -2;
         }
+        
+        if (entry.isExpired()) {
+            // Remove expired entry atomically
+            if (cache.remove(key, entry)) {
+                synchronized(evictionLock) {
+                    evictionPolicy.onRemove(entry);
+                }
+            }
+            return -2;
+        }
+        
+        return entry.getRemainingTtl();
     }
     
     /**
@@ -212,23 +214,22 @@ public class CacheEngine {
     public boolean expire(String key, long ttlSeconds) {
         Objects.requireNonNull(key, "Key cannot be null");
         
-        lock.writeLock().lock();
-        try {
-            CacheEntry entry = cache.get(key);
-            if (entry == null || entry.isExpired()) {
-                return false;
-            }
-            
-            // Create a new entry with the new TTL
-            CacheEntry newEntry = new CacheEntry(key, entry.getValue(), ttlSeconds, entry.getType());
-            cache.put(key, newEntry);
-            evictionPolicy.onAdd(newEntry);
-            
-            System.out.println("Set expiration for key: " + key + " to " + ttlSeconds + " seconds");
-            return true;
-        } finally {
-            lock.writeLock().unlock();
+        CacheEntry entry = cache.get(key);
+        if (entry == null || entry.isExpired()) {
+            return false;
         }
+        
+        // Create a new entry with the new TTL
+        CacheEntry newEntry = new CacheEntry(key, entry.getValue(), ttlSeconds, entry.getType());
+        cache.put(key, newEntry);
+        
+        // Eviction policy operations need synchronization
+        synchronized(evictionLock) {
+            evictionPolicy.onAdd(newEntry);
+        }
+        
+        System.out.println("Set expiration for key: " + key + " to " + ttlSeconds + " seconds");
+        return true;
     }
     
     /**
@@ -244,13 +245,8 @@ public class CacheEngine {
      * Clears all entries from the cache.
      */
     public void flush() {
-        lock.writeLock().lock();
-        try {
-            cache.clear();
-            System.out.println("Cache flushed");
-        } finally {
-            lock.writeLock().unlock();
-        }
+        cache.clear();
+        System.out.println("Cache flushed");
     }
     
     /**
@@ -258,19 +254,14 @@ public class CacheEngine {
      * @return Cache statistics
      */
     public CacheStats getStats() {
-        lock.readLock().lock();
-        try {
-            return new CacheStats(
-                cache.size(),
-                hits,
-                misses,
-                evictions,
-                maxSize,
-                evictionPolicy.getClass().getSimpleName()
-            );
-        } finally {
-            lock.readLock().unlock();
-        }
+        return new CacheStats(
+            cache.size(),
+            hits,
+            misses,
+            evictions,
+            maxSize,
+            evictionPolicy.getClass().getSimpleName()
+        );
     }
     
     /**
@@ -278,17 +269,12 @@ public class CacheEngine {
      * @return List of all keys
      */
     public List<String> keys() {
-        lock.readLock().lock();
-        try {
-            return cache.keySet().stream()
-                    .filter(key -> {
-                        CacheEntry entry = cache.get(key);
-                        return entry != null && !entry.isExpired();
-                    })
-                    .toList();
-        } finally {
-            lock.readLock().unlock();
-        }
+        return cache.keySet().stream()
+                .filter(key -> {
+                    CacheEntry entry = cache.get(key);
+                    return entry != null && !entry.isExpired();
+                })
+                .toList();
     }
     
     /**
@@ -296,12 +282,7 @@ public class CacheEngine {
      * @return Number of entries
      */
     public int size() {
-        lock.readLock().lock();
-        try {
-            return cache.size();
-        } finally {
-            lock.readLock().unlock();
-        }
+        return cache.size();
     }
     
     /**
@@ -341,13 +322,8 @@ public class CacheEngine {
         Objects.requireNonNull(key, "Key cannot be null");
         Objects.requireNonNull(member, "Member cannot be null");
         
-        lock.writeLock().lock();
-        try {
-            SortedSet sortedSet = sortedSets.computeIfAbsent(key, k -> new SortedSet());
-            return sortedSet.add(member, score);
-        } finally {
-            lock.writeLock().unlock();
-        }
+        SortedSet sortedSet = sortedSets.computeIfAbsent(key, k -> new SortedSet());
+        return sortedSet.add(member, score);
     }
     
     /**
@@ -360,13 +336,8 @@ public class CacheEngine {
         Objects.requireNonNull(key, "Key cannot be null");
         Objects.requireNonNull(memberScores, "Member scores cannot be null");
         
-        lock.writeLock().lock();
-        try {
-            SortedSet sortedSet = sortedSets.computeIfAbsent(key, k -> new SortedSet());
-            return sortedSet.add(memberScores);
-        } finally {
-            lock.writeLock().unlock();
-        }
+        SortedSet sortedSet = sortedSets.computeIfAbsent(key, k -> new SortedSet());
+        return sortedSet.add(memberScores);
     }
     
     /**
@@ -379,21 +350,16 @@ public class CacheEngine {
         Objects.requireNonNull(key, "Key cannot be null");
         Objects.requireNonNull(member, "Member cannot be null");
         
-        lock.writeLock().lock();
-        try {
-            SortedSet sortedSet = sortedSets.get(key);
-            if (sortedSet == null) {
-                return false;
-            }
-            
-            boolean removed = sortedSet.remove(member);
-            if (sortedSet.isEmpty()) {
-                sortedSets.remove(key);
-            }
-            return removed;
-        } finally {
-            lock.writeLock().unlock();
+        SortedSet sortedSet = sortedSets.get(key);
+        if (sortedSet == null) {
+            return false;
         }
+        
+        boolean removed = sortedSet.remove(member);
+        if (sortedSet.isEmpty()) {
+            sortedSets.remove(key);
+        }
+        return removed;
     }
     
     /**
@@ -406,21 +372,16 @@ public class CacheEngine {
         Objects.requireNonNull(key, "Key cannot be null");
         Objects.requireNonNull(members, "Members cannot be null");
         
-        lock.writeLock().lock();
-        try {
-            SortedSet sortedSet = sortedSets.get(key);
-            if (sortedSet == null) {
-                return 0;
-            }
-            
-            int removed = sortedSet.remove(members);
-            if (sortedSet.isEmpty()) {
-                sortedSets.remove(key);
-            }
-            return removed;
-        } finally {
-            lock.writeLock().unlock();
+        SortedSet sortedSet = sortedSets.get(key);
+        if (sortedSet == null) {
+            return 0;
         }
+        
+        int removed = sortedSet.remove(members);
+        if (sortedSet.isEmpty()) {
+            sortedSets.remove(key);
+        }
+        return removed;
     }
     
     /**
@@ -433,13 +394,8 @@ public class CacheEngine {
         Objects.requireNonNull(key, "Key cannot be null");
         Objects.requireNonNull(member, "Member cannot be null");
         
-        lock.readLock().lock();
-        try {
-            SortedSet sortedSet = sortedSets.get(key);
-            return sortedSet != null ? sortedSet.getScore(member) : null;
-        } finally {
-            lock.readLock().unlock();
-        }
+        SortedSet sortedSet = sortedSets.get(key);
+        return sortedSet != null ? sortedSet.getScore(member) : null;
     }
     
     /**
@@ -451,14 +407,8 @@ public class CacheEngine {
     public int zrank(String key, String member) {
         Objects.requireNonNull(key, "Key cannot be null");
         Objects.requireNonNull(member, "Member cannot be null");
-        
-        lock.readLock().lock();
-        try {
-            SortedSet sortedSet = sortedSets.get(key);
-            return sortedSet != null ? sortedSet.getRank(member) : -1;
-        } finally {
-            lock.readLock().unlock();
-        }
+        SortedSet sortedSet = sortedSets.get(key);
+        return sortedSet != null ? sortedSet.getRank(member) : -1;
     }
     
     /**
@@ -470,14 +420,8 @@ public class CacheEngine {
     public int zrevrank(String key, String member) {
         Objects.requireNonNull(key, "Key cannot be null");
         Objects.requireNonNull(member, "Member cannot be null");
-        
-        lock.readLock().lock();
-        try {
-            SortedSet sortedSet = sortedSets.get(key);
-            return sortedSet != null ? sortedSet.getReverseRank(member) : -1;
-        } finally {
-            lock.readLock().unlock();
-        }
+        SortedSet sortedSet = sortedSets.get(key);
+        return sortedSet != null ? sortedSet.getReverseRank(member) : -1;
     }
     
     /**
@@ -489,30 +433,24 @@ public class CacheEngine {
      */
     public List<String> zrange(String key, int start, int stop) {
         Objects.requireNonNull(key, "Key cannot be null");
-        
-        lock.readLock().lock();
-        try {
-            SortedSet sortedSet = sortedSets.get(key);
-            if (sortedSet == null) {
-                return new ArrayList<>();
-            }
-            
-            // Handle negative indices
-            int size = sortedSet.size();
-            int actualStart = start < 0 ? size + start : start;
-            int actualStop = stop < 0 ? size + stop : stop;
-            
-            if (actualStart > actualStop || actualStart >= size) {
-                return new ArrayList<>();
-            }
-            
-            actualStart = Math.max(0, actualStart);
-            actualStop = Math.min(size - 1, actualStop);
-            
-            return sortedSet.getRangeByRank(actualStart, actualStop);
-        } finally {
-            lock.readLock().unlock();
+        SortedSet sortedSet = sortedSets.get(key);
+        if (sortedSet == null) {
+            return new ArrayList<>();
         }
+        
+        // Handle negative indices
+        int size = sortedSet.size();
+        int actualStart = start < 0 ? size + start : start;
+        int actualStop = stop < 0 ? size + stop : stop;
+        
+        if (actualStart > actualStop || actualStart >= size) {
+            return new ArrayList<>();
+        }
+        
+        actualStart = Math.max(0, actualStart);
+        actualStop = Math.min(size - 1, actualStop);
+        
+        return sortedSet.getRangeByRank(actualStart, actualStop);
     }
     
     /**
@@ -524,30 +462,24 @@ public class CacheEngine {
      */
     public Map<String, Double> zrangeWithScores(String key, int start, int stop) {
         Objects.requireNonNull(key, "Key cannot be null");
-        
-        lock.readLock().lock();
-        try {
-            SortedSet sortedSet = sortedSets.get(key);
-            if (sortedSet == null) {
-                return new LinkedHashMap<>();
-            }
-            
-            // Handle negative indices
-            int size = sortedSet.size();
-            int actualStart = start < 0 ? size + start : start;
-            int actualStop = stop < 0 ? size + stop : stop;
-            
-            if (actualStart > actualStop || actualStart >= size) {
-                return new LinkedHashMap<>();
-            }
-            
-            actualStart = Math.max(0, actualStart);
-            actualStop = Math.min(size - 1, actualStop);
-            
-            return sortedSet.getRangeWithScoresByRank(actualStart, actualStop);
-        } finally {
-            lock.readLock().unlock();
+        SortedSet sortedSet = sortedSets.get(key);
+        if (sortedSet == null) {
+            return new LinkedHashMap<>();
         }
+        
+        // Handle negative indices
+        int size = sortedSet.size();
+        int actualStart = start < 0 ? size + start : start;
+        int actualStop = stop < 0 ? size + stop : stop;
+        
+        if (actualStart > actualStop || actualStart >= size) {
+            return new LinkedHashMap<>();
+        }
+        
+        actualStart = Math.max(0, actualStart);
+        actualStop = Math.min(size - 1, actualStop);
+        
+        return sortedSet.getRangeWithScoresByRank(actualStart, actualStop);
     }
     
     /**
@@ -559,30 +491,24 @@ public class CacheEngine {
      */
     public List<String> zrevrange(String key, int start, int stop) {
         Objects.requireNonNull(key, "Key cannot be null");
-        
-        lock.readLock().lock();
-        try {
-            SortedSet sortedSet = sortedSets.get(key);
-            if (sortedSet == null) {
-                return new ArrayList<>();
-            }
-            
-            // Handle negative indices
-            int size = sortedSet.size();
-            int actualStart = start < 0 ? size + start : start;
-            int actualStop = stop < 0 ? size + stop : stop;
-            
-            if (actualStart > actualStop || actualStart >= size) {
-                return new ArrayList<>();
-            }
-            
-            actualStart = Math.max(0, actualStart);
-            actualStop = Math.min(size - 1, actualStop);
-            
-            return sortedSet.getRangeByReverseRank(actualStart, actualStop);
-        } finally {
-            lock.readLock().unlock();
+        SortedSet sortedSet = sortedSets.get(key);
+        if (sortedSet == null) {
+            return new ArrayList<>();
         }
+        
+        // Handle negative indices
+        int size = sortedSet.size();
+        int actualStart = start < 0 ? size + start : start;
+        int actualStop = stop < 0 ? size + stop : stop;
+        
+        if (actualStart > actualStop || actualStart >= size) {
+            return new ArrayList<>();
+        }
+        
+        actualStart = Math.max(0, actualStart);
+        actualStop = Math.min(size - 1, actualStop);
+        
+        return sortedSet.getRangeByReverseRank(actualStart, actualStop);
     }
     
     /**
@@ -594,30 +520,24 @@ public class CacheEngine {
      */
     public Map<String, Double> zrevrangeWithScores(String key, int start, int stop) {
         Objects.requireNonNull(key, "Key cannot be null");
-        
-        lock.readLock().lock();
-        try {
-            SortedSet sortedSet = sortedSets.get(key);
-            if (sortedSet == null) {
-                return new LinkedHashMap<>();
-            }
-            
-            // Handle negative indices
-            int size = sortedSet.size();
-            int actualStart = start < 0 ? size + start : start;
-            int actualStop = stop < 0 ? size + stop : stop;
-            
-            if (actualStart > actualStop || actualStart >= size) {
-                return new LinkedHashMap<>();
-            }
-            
-            actualStart = Math.max(0, actualStart);
-            actualStop = Math.min(size - 1, actualStop);
-            
-            return sortedSet.getRangeWithScoresByReverseRank(actualStart, actualStop);
-        } finally {
-            lock.readLock().unlock();
+        SortedSet sortedSet = sortedSets.get(key);
+        if (sortedSet == null) {
+            return new LinkedHashMap<>();
         }
+        
+        // Handle negative indices
+        int size = sortedSet.size();
+        int actualStart = start < 0 ? size + start : start;
+        int actualStop = stop < 0 ? size + stop : stop;
+        
+        if (actualStart > actualStop || actualStart >= size) {
+            return new LinkedHashMap<>();
+        }
+        
+        actualStart = Math.max(0, actualStart);
+        actualStop = Math.min(size - 1, actualStop);
+        
+        return sortedSet.getRangeWithScoresByReverseRank(actualStart, actualStop);
     }
     
     /**
@@ -629,14 +549,8 @@ public class CacheEngine {
      */
     public List<String> zrangeByScore(String key, double minScore, double maxScore) {
         Objects.requireNonNull(key, "Key cannot be null");
-        
-        lock.readLock().lock();
-        try {
-            SortedSet sortedSet = sortedSets.get(key);
-            return sortedSet != null ? sortedSet.getRangeByScore(minScore, maxScore) : new ArrayList<>();
-        } finally {
-            lock.readLock().unlock();
-        }
+        SortedSet sortedSet = sortedSets.get(key);
+        return sortedSet != null ? sortedSet.getRangeByScore(minScore, maxScore) : new ArrayList<>();
     }
     
     /**
@@ -648,14 +562,8 @@ public class CacheEngine {
      */
     public Map<String, Double> zrangeByScoreWithScores(String key, double minScore, double maxScore) {
         Objects.requireNonNull(key, "Key cannot be null");
-        
-        lock.readLock().lock();
-        try {
-            SortedSet sortedSet = sortedSets.get(key);
-            return sortedSet != null ? sortedSet.getRangeWithScoresByScore(minScore, maxScore) : new LinkedHashMap<>();
-        } finally {
-            lock.readLock().unlock();
-        }
+        SortedSet sortedSet = sortedSets.get(key);
+        return sortedSet != null ? sortedSet.getRangeWithScoresByScore(minScore, maxScore) : new LinkedHashMap<>();
     }
     
     /**
@@ -668,14 +576,8 @@ public class CacheEngine {
     public double zincrby(String key, String member, double increment) {
         Objects.requireNonNull(key, "Key cannot be null");
         Objects.requireNonNull(member, "Member cannot be null");
-        
-        lock.writeLock().lock();
-        try {
-            SortedSet sortedSet = sortedSets.computeIfAbsent(key, k -> new SortedSet());
-            return sortedSet.incrementScore(member, increment);
-        } finally {
-            lock.writeLock().unlock();
-        }
+        SortedSet sortedSet = sortedSets.computeIfAbsent(key, k -> new SortedSet());
+        return sortedSet.incrementScore(member, increment);
     }
     
     /**
@@ -685,14 +587,8 @@ public class CacheEngine {
      */
     public int zcard(String key) {
         Objects.requireNonNull(key, "Key cannot be null");
-        
-        lock.readLock().lock();
-        try {
-            SortedSet sortedSet = sortedSets.get(key);
-            return sortedSet != null ? sortedSet.size() : 0;
-        } finally {
-            lock.readLock().unlock();
-        }
+        SortedSet sortedSet = sortedSets.get(key);
+        return sortedSet != null ? sortedSet.size() : 0;
     }
     
     /**
@@ -704,17 +600,11 @@ public class CacheEngine {
      */
     public int zcount(String key, double minScore, double maxScore) {
         Objects.requireNonNull(key, "Key cannot be null");
-        
-        lock.readLock().lock();
-        try {
-            SortedSet sortedSet = sortedSets.get(key);
-            if (sortedSet == null) {
-                return 0;
-            }
-            return sortedSet.getRangeByScore(minScore, maxScore).size();
-        } finally {
-            lock.readLock().unlock();
+        SortedSet sortedSet = sortedSets.get(key);
+        if (sortedSet == null) {
+            return 0;
         }
+        return sortedSet.getRangeByScore(minScore, maxScore).size();
     }
     
     /**
@@ -726,37 +616,31 @@ public class CacheEngine {
      */
     public int zremrangeByRank(String key, int start, int stop) {
         Objects.requireNonNull(key, "Key cannot be null");
-        
-        lock.writeLock().lock();
-        try {
-            SortedSet sortedSet = sortedSets.get(key);
-            if (sortedSet == null) {
-                return 0;
-            }
-            
-            // Handle negative indices
-            int size = sortedSet.size();
-            int actualStart = start < 0 ? size + start : start;
-            int actualStop = stop < 0 ? size + stop : stop;
-            
-            if (actualStart > actualStop || actualStart >= size) {
-                return 0;
-            }
-            
-            actualStart = Math.max(0, actualStart);
-            actualStop = Math.min(size - 1, actualStop);
-            
-            List<String> membersToRemove = sortedSet.getRangeByRank(actualStart, actualStop);
-            int removed = sortedSet.remove(membersToRemove);
-            
-            if (sortedSet.isEmpty()) {
-                sortedSets.remove(key);
-            }
-            
-            return removed;
-        } finally {
-            lock.writeLock().unlock();
+        SortedSet sortedSet = sortedSets.get(key);
+        if (sortedSet == null) {
+            return 0;
         }
+        
+        // Handle negative indices
+        int size = sortedSet.size();
+        int actualStart = start < 0 ? size + start : start;
+        int actualStop = stop < 0 ? size + stop : stop;
+        
+        if (actualStart > actualStop || actualStart >= size) {
+            return 0;
+        }
+        
+        actualStart = Math.max(0, actualStart);
+        actualStop = Math.min(size - 1, actualStop);
+        
+        List<String> membersToRemove = sortedSet.getRangeByRank(actualStart, actualStop);
+        int removed = sortedSet.remove(membersToRemove);
+        
+        if (sortedSet.isEmpty()) {
+            sortedSets.remove(key);
+        }
+        
+        return removed;
     }
     
     /**
@@ -768,25 +652,19 @@ public class CacheEngine {
      */
     public int zremrangeByScore(String key, double minScore, double maxScore) {
         Objects.requireNonNull(key, "Key cannot be null");
-        
-        lock.writeLock().lock();
-        try {
-            SortedSet sortedSet = sortedSets.get(key);
-            if (sortedSet == null) {
-                return 0;
-            }
-            
-            List<String> membersToRemove = sortedSet.getRangeByScore(minScore, maxScore);
-            int removed = sortedSet.remove(membersToRemove);
-            
-            if (sortedSet.isEmpty()) {
-                sortedSets.remove(key);
-            }
-            
-            return removed;
-        } finally {
-            lock.writeLock().unlock();
+        SortedSet sortedSet = sortedSets.get(key);
+        if (sortedSet == null) {
+            return 0;
         }
+        
+        List<String> membersToRemove = sortedSet.getRangeByScore(minScore, maxScore);
+        int removed = sortedSet.remove(membersToRemove);
+        
+        if (sortedSet.isEmpty()) {
+            sortedSets.remove(key);
+        }
+        
+        return removed;
     }
     
     /**
@@ -796,14 +674,8 @@ public class CacheEngine {
      */
     public List<String> zmembers(String key) {
         Objects.requireNonNull(key, "Key cannot be null");
-        
-        lock.readLock().lock();
-        try {
-            SortedSet sortedSet = sortedSets.get(key);
-            return sortedSet != null ? sortedSet.getAllMembers() : new ArrayList<>();
-        } finally {
-            lock.readLock().unlock();
-        }
+        SortedSet sortedSet = sortedSets.get(key);
+        return sortedSet != null ? sortedSet.getAllMembers() : new ArrayList<>();
     }
     
     /**
@@ -813,14 +685,8 @@ public class CacheEngine {
      */
     public Map<String, Double> zmembersWithScores(String key) {
         Objects.requireNonNull(key, "Key cannot be null");
-        
-        lock.readLock().lock();
-        try {
-            SortedSet sortedSet = sortedSets.get(key);
-            return sortedSet != null ? sortedSet.getAllWithScores() : new LinkedHashMap<>();
-        } finally {
-            lock.readLock().unlock();
-        }
+        SortedSet sortedSet = sortedSets.get(key);
+        return sortedSet != null ? sortedSet.getAllWithScores() : new LinkedHashMap<>();
     }
     
     /**
@@ -829,14 +695,8 @@ public class CacheEngine {
      * @return true if the sorted set exists
      */
     public boolean zexists(String key) {
-        Objects.requireNonNull(key, "Key cannot be null");
-        
-        lock.readLock().lock();
-        try {
-            return sortedSets.containsKey(key);
-        } finally {
-            lock.readLock().unlock();
-        }
+        Objects.requireNonNull(key, "Key cannot be null");       
+        return sortedSets.containsKey(key);
     }
     
     /**
@@ -846,13 +706,7 @@ public class CacheEngine {
      */
     public boolean zdel(String key) {
         Objects.requireNonNull(key, "Key cannot be null");
-        
-        lock.writeLock().lock();
-        try {
-            return sortedSets.remove(key) != null;
-        } finally {
-            lock.writeLock().unlock();
-        }
+        return sortedSets.remove(key) != null;
     }
     
     private void evictEntries() {
@@ -873,25 +727,20 @@ public class CacheEngine {
     }
     
     private void cleanupExpiredEntries() {
-        lock.writeLock().lock();
-        try {
-            int removed = 0;
-            var iterator = cache.entrySet().iterator();
-            
-            while (iterator.hasNext()) {
-                var entry = iterator.next();
-                if (entry.getValue().isExpired()) {
-                    iterator.remove();
-                    evictionPolicy.onRemove(entry.getValue());
-                    removed++;
-                }
+        int removed = 0;
+        var iterator = cache.entrySet().iterator();
+        
+        while (iterator.hasNext()) {
+            var entry = iterator.next();
+            if (entry.getValue().isExpired()) {
+                iterator.remove();
+                evictionPolicy.onRemove(entry.getValue());
+                removed++;
             }
-            
-            if (removed > 0) {
-                System.out.println("Cleaned up " + removed + " expired entries");
-            }
-        } finally {
-            lock.writeLock().unlock();
+        }
+        
+        if (removed > 0) {
+            System.out.println("Cleaned up " + removed + " expired entries");
         }
     }
     

@@ -2,84 +2,85 @@
 
 ## Overview
 
-FastCache now supports data persistence, enabling cache nodes to recover their data after crashes or restarts. The persistence system uses a combination of Write-Ahead Logging (WAL) and snapshots to ensure data durability and fast recovery.
+FastCache provides enterprise-grade persistence capabilities through a combination of Write-Ahead Logging (WAL) and periodic snapshots. This ensures data durability and enables crash recovery, making FastCache suitable for production environments where data loss is not acceptable.
 
 ## Architecture
 
+### Persistence Layers
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                           PERSISTENCE LAYERS                               │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐             │
+│  │   Memory Cache  │  │   Write Buffer  │  │   Disk Storage  │             │
+│  │   (Fast)        │  │   (Async)       │  │   (Persistent)  │             │
+│  │                 │  │                 │  │                 │             │
+│  │ • LRU Cache     │  │ • WAL Buffer    │  │ • Snapshots     │             │
+│  │ • Eviction      │  │ • Async Flush   │  │ • WAL Files     │             │
+│  │ • TTL Support   │  │ • Batch Writes  │  │ • Recovery      │             │
+│  └─────────────────┘  └─────────────────┘  └─────────────────┘             │
+│           │                     │                     │                    │
+│           └─────────────────────┼─────────────────────┘                    │
+│                                 │                                          │
+│                    ┌─────────────▼─────────────┐                          │
+│                    │     Crash Recovery        │                          │
+│                    │                           │                          │
+│                    │ • Load Latest Snapshot    │                          │
+│                    │ • Replay WAL Operations   │                          │
+│                    │ • Validate Data Integrity │                          │
+│                    │ • Resume Operations       │                          │
+│                    └───────────────────────────┘                          │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
 ### Components
 
-1. **WriteAheadLog (WAL)**: Logs all cache operations before they are applied to memory
-2. **PersistentCacheEngine**: Extends CacheEngine with persistence capabilities
-3. **Snapshot System**: Creates periodic snapshots of the cache state
-4. **Recovery Manager**: Handles the recovery process on node startup
-
-### Data Flow
-
-```
-Client Request → Cache Engine → WAL Log → Memory Cache
-                                    ↓
-                              Snapshot (periodic)
-```
-
-## Implementation Details
-
-### Write-Ahead Log (WAL)
-
-The WAL ensures that all operations are logged to disk before being applied to memory, providing durability guarantees.
-
-**Features:**
-- Sequential logging of all cache operations
-- JSON-based log format for easy parsing
-- Automatic log truncation after successful snapshots
-- Crash-safe with fsync operations
-
-**Log Entry Format:**
-```
-{
-  "sequenceNumber": 123,
-  "timestamp": "2024-01-01T12:00:00Z",
-  "type": "SET|DELETE|ZADD|ZREM|EXPIRE",
-  "key": "user:123",
-  "value": "John Doe",
-  "ttlSeconds": 3600,
-  "dataType": "STRING|SORTED_SET",
-  "member": "player1",  // For sorted set operations
-  "score": 100.0        // For sorted set operations
-}
-```
-
-### Snapshot System
-
-Snapshots provide fast recovery by creating periodic point-in-time copies of the cache state.
-
-**Features:**
-- Periodic snapshots (configurable interval)
-- Automatic cleanup of old snapshots
-- Binary serialization for efficiency
-- Atomic snapshot creation
-
-**Snapshot Structure:**
-```java
-class SnapshotData {
-    Instant timestamp;
-    Map<String, CacheEntry> cacheEntries;
-    Map<String, SortedSet> sortedSets;
-}
-```
-
-### Recovery Process
-
-When a node starts up, it performs the following recovery steps:
-
-1. **Detect Persistence Data**: Check for WAL files and snapshots
-2. **Load Latest Snapshot**: Restore the most recent snapshot
-3. **Replay WAL Operations**: Apply all operations since the snapshot
-4. **Validate Data**: Ensure data integrity
-5. **Resume Operations**: Start accepting new requests
+1. **Write-Ahead Log (WAL)**: Logs all operations sequentially for crash recovery
+2. **Snapshots**: Periodic full state dumps for fast recovery
+3. **Recovery Engine**: Automatically recovers data on startup
+4. **Configuration Management**: Flexible persistence settings
 
 ## Usage
 
 ### Basic Usage
+
+#### Command Line
+
+```bash
+# Start server with persistence enabled
+java -jar FastCache-1.0.0-fat.jar \
+  --host 0.0.0.0 \
+  --port 6379 \
+  --node-id node1 \
+  --persistence-enabled \
+  --data-dir /app/data
+
+# Using environment variables
+export PERSISTENCE_ENABLED=true
+export DATA_DIR=/app/data
+java -jar FastCache-1.0.0-fat.jar --host 0.0.0.0 --port 6379
+```
+
+#### Docker
+
+```yaml
+version: '3.8'
+services:
+  fastcache-node:
+    image: fastcache:latest
+    environment:
+      - PERSISTENCE_ENABLED=true
+      - DATA_DIR=/app/data
+    volumes:
+      - fastcache_data:/app/data
+    command: ["java", "-jar", "FastCache-1.0.0-fat.jar", "--persistence-enabled"]
+```
+
+### Programmatic Usage
+
+#### Direct Usage
 
 ```java
 // Create a persistent cache engine
@@ -96,6 +97,23 @@ cache.createSnapshot();
 cache.shutdown();
 ```
 
+#### Configuration-Based Usage
+
+```java
+// Configure persistence
+PersistenceConfig config = PersistenceConfig.builder()
+    .enablePersistence(true)
+    .enableWriteAheadLog(true)
+    .enableSnapshots(true)
+    .snapshotInterval(Duration.ofMinutes(5))
+    .persistenceDir("/app/data")
+    .enableCompression(false)
+    .build();
+
+// Use with FastCache server
+FastCacheServer server = new FastCacheServer("localhost", 6379, "node1", true, "/app/data");
+```
+
 ### Recovery Example
 
 ```java
@@ -107,16 +125,39 @@ String user = (String) recoveredCache.get("user:123");
 List<String> topPlayers = recoveredCache.zrevrange("leaderboard", 0, 2);
 ```
 
-### Configuration
+## Configuration
+
+### Environment Variables
+
+```bash
+# Basic persistence
+PERSISTENCE_ENABLED=true
+DATA_DIR=/app/data
+
+# Advanced settings
+SNAPSHOT_INTERVAL=PT5M          # ISO-8601 duration
+WAL_FLUSH_INTERVAL=PT1S         # ISO-8601 duration
+MAX_SNAPSHOT_SIZE=1073741824    # 1GB in bytes
+
+# Optional features
+ENABLE_COMPRESSION=true
+ENABLE_ENCRYPTION=true
+ENCRYPTION_KEY=your-secret-key
+```
+
+### Configuration Class
 
 ```java
-// Custom configuration
-PersistentCacheEngine cache = new PersistentCacheEngine(
-    "data/node1",           // Data directory
-    "node1",                // Node ID
-    10000,                  // Max cache size
-    new EvictionPolicy.LRU() // Eviction policy
-);
+PersistenceConfig config = PersistenceConfig.builder()
+    .enablePersistence(true)
+    .enableWriteAheadLog(true)
+    .enableSnapshots(true)
+    .snapshotInterval(Duration.ofMinutes(5))
+    .persistenceDir("/app/data")
+    .maxSnapshotSize(1024 * 1024 * 1024) // 1GB
+    .enableCompression(false)
+    .enableEncryption(false)
+    .build();
 ```
 
 ## File Structure
@@ -137,6 +178,16 @@ data/
         └── node2_1234567890.snapshot
 ```
 
+## Recovery Process
+
+When a node starts up, it performs the following recovery steps:
+
+1. **Detect Persistence Data**: Check for WAL files and snapshots
+2. **Load Latest Snapshot**: Restore the most recent snapshot
+3. **Replay WAL Operations**: Apply all operations since the snapshot
+4. **Validate Data**: Ensure data integrity
+5. **Resume Operations**: Start accepting new requests
+
 ## Performance Considerations
 
 ### WAL Performance
@@ -145,98 +196,60 @@ data/
 - Configurable flush intervals
 
 ### Snapshot Performance
-- Background snapshot creation
-- Incremental snapshots (planned)
-- Compression support (planned)
+- Asynchronous snapshot creation
+- Configurable snapshot intervals
+- Automatic cleanup of old snapshots
 
-### Recovery Performance
-- Fast snapshot loading
-- Parallel WAL replay (planned)
-- Memory-mapped files (planned)
+### Memory Usage
+- WAL buffer size: ~1MB per node
+- Snapshot memory: Temporary spike during creation
+- Recovery memory: Depends on data size
 
-## Monitoring and Statistics
+## Monitoring
+
+### Statistics
 
 ```java
 PersistentCacheStats stats = cache.getPersistentStats();
-System.out.println("WAL Sequence Number: " + stats.getWalSequenceNumber());
-System.out.println("Cache Stats: " + stats.getCacheStats());
-System.out.println("Data Directory: " + stats.getDataDir());
+System.out.println("Cache stats: " + stats.getCacheStats());
+System.out.println("WAL sequence number: " + stats.getWalSequenceNumber());
+System.out.println("Data directory: " + stats.getDataDir());
+System.out.println("Node ID: " + stats.getNodeId());
 ```
 
-## Error Handling
+### Health Checks
 
-### WAL Errors
-- Automatic retry on write failures
-- Graceful degradation if WAL is unavailable
-- Data loss prevention through fsync
-
-### Snapshot Errors
-- Rollback to previous snapshot on failure
-- Automatic retry mechanisms
-- Fallback to WAL-only recovery
-
-### Recovery Errors
-- Partial recovery with error reporting
-- Manual recovery options
-- Data validation and repair tools
-
-## Best Practices
-
-### Configuration
-- Use dedicated storage for persistence data
-- Configure appropriate snapshot intervals
-- Monitor disk space usage
-
-### Operations
-- Regular snapshot creation
-- Monitor WAL file sizes
-- Backup persistence data
-
-### Monitoring
-- Track recovery times
-- Monitor WAL replay performance
-- Alert on persistence failures
-
-## Future Enhancements
-
-### Planned Features
-1. **Incremental Snapshots**: Only save changed data
-2. **Compression**: Reduce storage requirements
-3. **Encryption**: Secure sensitive data
-4. **Replication**: Cross-node data replication
-5. **Backup/Restore**: Automated backup systems
-
-### Performance Optimizations
-1. **Memory-mapped Files**: Faster I/O operations
-2. **Parallel Recovery**: Multi-threaded WAL replay
-3. **Delta Snapshots**: Efficient storage usage
-4. **SSD Optimization**: Optimize for SSD characteristics
-
-## Testing
-
-### Unit Tests
-- WAL operation logging and replay
-- Snapshot creation and loading
-- Recovery process validation
-- Error handling scenarios
-
-### Integration Tests
-- End-to-end persistence workflows
-- Crash recovery scenarios
-- Performance benchmarks
-- Stress testing
-
-### Example Test
 ```java
-// Test persistence and recovery
-PersistentCacheEngine cache = new PersistentCacheEngine("test-data", "test-node");
-cache.set("key1", "value1", 3600, CacheEntry.EntryType.STRING);
-cache.createSnapshot();
-cache.shutdown();
+// Check if persistence is working
+boolean isHealthy = cache.getPersistentStats().getCacheStats().getSize() > 0;
+```
 
-// Simulate crash and recovery
-PersistentCacheEngine recovered = new PersistentCacheEngine("test-data", "test-node");
-assertEquals("value1", recovered.get("key1"));
+## Examples
+
+### Running the Persistence Example
+
+```bash
+# Using Gradle
+./gradlew runPersistenceExample
+
+# Using Java directly
+java -cp build/libs/FastCache-1.0.0-fat.jar com.fastcache.examples.PersistenceExample
+```
+
+### Docker Compose with Persistence
+
+```yaml
+version: '3.8'
+services:
+  fastcache-node1:
+    build: .
+    environment:
+      - NODE_ID=node1
+      - PERSISTENCE_ENABLED=true
+      - DATA_DIR=/app/data
+    volumes:
+      - fastcache_data1:/app/data
+    command: ["java", "-jar", "FastCache-1.0.0-fat.jar", "--persistence-enabled"]
 ```
 
 ## Troubleshooting
@@ -259,6 +272,7 @@ assertEquals("value1", recovered.get("key1"));
    - Consider incremental snapshots
 
 ### Debug Commands
+
 ```bash
 # Check WAL file
 cat data/node1/wal/node1.wal
@@ -269,6 +283,14 @@ ls -la data/node1/snapshots/
 # Monitor recovery
 tail -f logs/fastcache.log
 ```
+
+## Best Practices
+
+1. **Regular Snapshots**: Create snapshots every 5-10 minutes
+2. **Adequate Disk Space**: Ensure sufficient space for WAL and snapshots
+3. **Fast Storage**: Use SSD storage for better performance
+4. **Monitoring**: Monitor WAL size and snapshot creation
+5. **Backup Strategy**: Implement regular backups of persistence data
 
 ## Conclusion
 

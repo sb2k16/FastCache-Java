@@ -1,0 +1,189 @@
+version: '3.8'
+
+services:
+  # Service Discovery API
+  service-discovery:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    container_name: fastcache-service-discovery
+    ports:
+      - "8081:8081"
+    environment:
+      - SPRING_PROFILES_ACTIVE=docker
+    command: ["java", "-cp", "/app/FastCache-1.0.0-fat.jar", "com.fastcache.discovery.ServiceDiscoveryAPI"]
+    networks:
+      - fastcache-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8081/discovery/ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # Health Checker Service
+  health-checker:
+    build:
+      context: ../health-checker
+      dockerfile: Dockerfile
+    container_name: fastcache-health-checker
+    ports:
+      - "8080:8080"
+    environment:
+      - NODE_COUNT=3
+    networks:
+      - fastcache-network
+    restart: unless-stopped
+    depends_on:
+      service-discovery:
+        condition: service_healthy
+
+  # Load Balancer (HAProxy)
+  load-balancer:
+    image: haproxy:2.8
+    container_name: fastcache-load-balancer
+    ports:
+      - "6380:6380"
+      - "8404:8404"
+    volumes:
+      - ../config/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+    networks:
+      - fastcache-network
+    restart: unless-stopped
+    depends_on:
+      - proxy1
+      - proxy2
+      - proxy3
+
+  # Proxy 1
+  proxy1:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    container_name: fastcache-proxy1
+    ports:
+      - "6382:6382"
+    environment:
+      - PROXY_ID=proxy1
+      - HEALTH_SERVICE_URL=http://health-checker:8080
+      - SERVICE_DISCOVERY_URL=http://service-discovery:8081
+    command: ["java", "-cp", "/app/FastCache-1.0.0-fat.jar", "com.fastcache.proxy.FastCacheProxy", "--host", "0.0.0.0", "--port", "6382", "--proxy-id", "proxy1", "--health-service", "http://health-checker:8080", "--service-discovery", "http://service-discovery:8081"]
+    networks:
+      - fastcache-network
+    restart: unless-stopped
+    depends_on:
+      - health-checker
+      - service-discovery
+
+  # Proxy 2
+  proxy2:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    container_name: fastcache-proxy2
+    ports:
+      - "6383:6383"
+    environment:
+      - PROXY_ID=proxy2
+      - HEALTH_SERVICE_URL=http://health-checker:8080
+      - SERVICE_DISCOVERY_URL=http://service-discovery:8081
+    command: ["java", "-cp", "/app/FastCache-1.0.0-fat.jar", "com.fastcache.proxy.FastCacheProxy", "--host", "0.0.0.0", "--port", "6383", "--proxy-id", "proxy2", "--health-service", "http://health-checker:8080", "--service-discovery", "http://service-discovery:8081"]
+    networks:
+      - fastcache-network
+    restart: unless-stopped
+    depends_on:
+      - health-checker
+      - service-discovery
+
+  # Proxy 3
+  proxy3:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    container_name: fastcache-proxy3
+    ports:
+      - "6384:6384"
+    environment:
+      - PROXY_ID=proxy3
+      - HEALTH_SERVICE_URL=http://health-checker:8080
+      - SERVICE_DISCOVERY_URL=http://service-discovery:8081
+    command: ["java", "-cp", "/app/FastCache-1.0.0-fat.jar", "com.fastcache.proxy.FastCacheProxy", "--host", "0.0.0.0", "--port", "6384", "--proxy-id", "proxy3", "--health-service", "http://health-checker:8080", "--service-discovery", "http://service-discovery:8081"]
+    networks:
+      - fastcache-network
+    restart: unless-stopped
+    depends_on:
+      - health-checker
+      - service-discovery
+
+  # Cache Node 1
+  fastcache-node1:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    container_name: fastcache-node1
+    ports:
+      - "7001:6379"
+    environment:
+      - NODE_ID=node1
+      - SERVICE_DISCOVERY_URL=http://service-discovery:8081
+    command: ["java", "-cp", "/app/FastCache-1.0.0-fat.jar", "com.fastcache.server.FastCacheServer", "--host", "0.0.0.0", "--port", "6379", "--node-id", "node1", "--service-discovery", "http://service-discovery:8081"]
+    networks:
+      - fastcache-network
+    restart: unless-stopped
+    depends_on:
+      - service-discovery
+    volumes:
+      - ../data/node1:/app/data
+
+  # Cache Node 2
+  fastcache-node2:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    container_name: fastcache-node2
+    ports:
+      - "7002:6379"
+    environment:
+      - NODE_ID=node2
+      - SERVICE_DISCOVERY_URL=http://service-discovery:8081
+    command: ["java", "-cp", "/app/FastCache-1.0.0-fat.jar", "com.fastcache.server.FastCacheServer", "--host", "0.0.0.0", "--port", "6379", "--node-id", "node2", "--service-discovery", "http://service-discovery:8081"]
+    networks:
+      - fastcache-network
+    restart: unless-stopped
+    depends_on:
+      - service-discovery
+    volumes:
+      - ../data/node2:/app/data
+
+  # Cache Node 3
+  fastcache-node3:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    container_name: fastcache-node3
+    ports:
+      - "7003:6379"
+    environment:
+      - NODE_ID=node3
+      - SERVICE_DISCOVERY_URL=http://service-discovery:8081
+    command: ["java", "-cp", "/app/FastCache-1.0.0-fat.jar", "com.fastcache.server.FastCacheServer", "--host", "0.0.0.0", "--port", "6379", "--node-id", "node3", "--service-discovery", "http://service-discovery:8081"]
+    networks:
+      - fastcache-network
+    restart: unless-stopped
+    depends_on:
+      - service-discovery
+    volumes:
+      - ../data/node3:/app/data
+
+networks:
+  fastcache-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
+
+volumes:
+  node1-data:
+  node2-data:
+  node3-data: 

@@ -321,4 +321,36 @@ public class WriteAheadLog {
     public interface ReplayHandler {
         void handle(LogEntry operation);
     }
+    
+    /**
+     * Returns all log entries from the WAL file as a list.
+     */
+    public List<LogEntry> getAllEntries() {
+        lock.readLock().lock();
+        try {
+            List<LogEntry> entries = new ArrayList<>();
+            if (!Files.exists(logFile)) {
+                return entries;
+            }
+            try (BufferedReader reader = Files.newBufferedReader(logFile)) {
+                String line;
+                while ((line = reader.readLine()) != null) {
+                    if (!line.trim().isEmpty()) {
+                        try {
+                            LogEntry entry = deserializeLogEntry(line);
+                            entries.add(entry);
+                        } catch (Exception e) {
+                            System.err.println("Failed to parse WAL entry: " + line + " - " + e.getMessage());
+                        }
+                    }
+                }
+            }
+            return entries;
+        } catch (IOException e) {
+            System.err.println("Failed to read WAL entries: " + e.getMessage());
+            throw new RuntimeException("WAL read failed", e);
+        } finally {
+            lock.readLock().unlock();
+        }
+    }
 } 
