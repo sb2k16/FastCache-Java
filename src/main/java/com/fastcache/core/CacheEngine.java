@@ -67,19 +67,19 @@ public class CacheEngine {
         Objects.requireNonNull(key, "Key cannot be null");
         Objects.requireNonNull(value, "Value cannot be null");
         
-        // Check if we need to evict entries (ConcurrentHashMap is thread-safe)
-        if (cache.size() >= maxSize && !cache.containsKey(key)) {
-            synchronized(evictionLock) {
-                evictEntries();
-            }
-        }
-        
         CacheEntry entry = new CacheEntry(key, value, ttlSeconds, type);
         cache.put(key, entry);
         
         // Eviction policy operations need synchronization
         synchronized(evictionLock) {
             evictionPolicy.onAdd(entry);
+        }
+        
+        // Check if we need to evict entries AFTER adding the item
+        if (cache.size() > maxSize) {
+            synchronized(evictionLock) {
+                evictEntries();
+            }
         }
         
         System.out.println("Stored key: " + key);

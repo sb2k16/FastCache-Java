@@ -5,6 +5,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * Interface for cache eviction policies.
@@ -42,6 +43,7 @@ public interface EvictionPolicy {
      */
     class LRU implements EvictionPolicy {
         private final Map<String, Long> accessTimes = new ConcurrentHashMap<>();
+        private final AtomicLong counter = new AtomicLong(0);
         
         @Override
         public List<String> selectForEviction(Map<String, CacheEntry> entries, int maxSize) {
@@ -59,12 +61,12 @@ public interface EvictionPolicy {
         
         @Override
         public void onAccess(CacheEntry entry) {
-            accessTimes.put(entry.getKey(), System.currentTimeMillis());
+            accessTimes.put(entry.getKey(), counter.incrementAndGet());
         }
         
         @Override
         public void onAdd(CacheEntry entry) {
-            accessTimes.put(entry.getKey(), System.currentTimeMillis());
+            accessTimes.put(entry.getKey(), counter.incrementAndGet());
         }
         
         @Override
@@ -100,7 +102,7 @@ public interface EvictionPolicy {
         
         @Override
         public void onAdd(CacheEntry entry) {
-            accessCounts.put(entry.getKey(), 0);
+            accessCounts.put(entry.getKey(), 1);
         }
         
         @Override

@@ -350,6 +350,8 @@ public class DistributedCacheManager {
         }
         
         localEngines.values().forEach(CacheEngine::shutdown);
+        nodes.clear();
+        localEngines.clear();
         System.out.println("Distributed cache manager shutdown complete");
     }
     
